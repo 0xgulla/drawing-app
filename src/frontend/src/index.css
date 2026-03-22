@@ -1,0 +1,307 @@
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/assets/fonts/PlusJakartaSans.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme CSS Variables */
+:root[data-theme="dark"],
+:root {
+  --bg-primary: #0d0d0f;
+  --bg-secondary: #12121a;
+  --bg-panel: rgba(22, 22, 30, 0.97);
+  --bg-toolbar: #1a1a2e;
+  --text-primary: #e0e0e8;
+  --text-secondary: #a0a0b0;
+  --border-color: rgba(255, 255, 255, 0.1);
+  --accent: oklch(0.72 0.15 200);
+  --btn-bg: rgba(255, 255, 255, 0.07);
+  --btn-hover: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --layer-active: rgba(100, 200, 220, 0.15);
+  --workspace-bg: #0d0d0f;
+  --workspace-dot: oklch(0.28 0.005 240);
+}
+
+:root[data-theme="light"] {
+  --bg-primary: #f0f2f5;
+  --bg-secondary: #e8eaf0;
+  --bg-panel: rgba(240, 242, 245, 0.98);
+  --bg-toolbar: #dde1ea;
+  --text-primary: #1a1a2e;
+  --text-secondary: #555577;
+  --border-color: rgba(0, 0, 0, 0.12);
+  --accent: oklch(0.62 0.15 200);
+  --btn-bg: rgba(0, 0, 0, 0.06);
+  --btn-hover: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  --layer-active: rgba(60, 150, 180, 0.15);
+  --workspace-bg: #e0e2e8;
+  --workspace-dot: #c0c4d0;
+}
+
+@layer base {
+  :root {
+    --radius: 0.625rem;
+
+    /* Dark studio – cyan accent */
+    --background: 0.1 0.005 240;
+    --foreground: 0.95 0.005 240;
+    --card: 0.13 0.006 240;
+    --card-foreground: 0.95 0.005 240;
+    --popover: 0.15 0.006 240;
+    --popover-foreground: 0.95 0.005 240;
+    --primary: 0.72 0.15 200;
+    --primary-foreground: 0.08 0.005 240;
+    --secondary: 0.18 0.005 240;
+    --secondary-foreground: 0.85 0.005 240;
+    --muted: 0.18 0.005 240;
+    --muted-foreground: 0.5 0.005 240;
+    --accent: 0.72 0.15 200;
+    --accent-foreground: 0.08 0.005 240;
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 0.985 0 0;
+    --border: 0.22 0.005 240;
+    --input: 0.2 0.005 240;
+    --ring: 0.72 0.15 200;
+    --chart-1: 0.72 0.15 200;
+    --chart-2: 0.6 0.12 160;
+    --chart-3: 0.55 0.14 280;
+    --chart-4: 0.75 0.18 65;
+    --chart-5: 0.65 0.14 30;
+    --sidebar: 0.13 0.006 240;
+    --sidebar-foreground: 0.95 0.005 240;
+    --sidebar-primary: 0.72 0.15 200;
+    --sidebar-primary-foreground: 0.08 0.005 240;
+    --sidebar-accent: 0.2 0.005 240;
+    --sidebar-accent-foreground: 0.95 0.005 240;
+    --sidebar-border: 0.22 0.005 240;
+    --sidebar-ring: 0.72 0.15 200;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: oklch(var(--background));
+    color: oklch(var(--foreground));
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.35s ease, color 0.3s ease;
+  }
+}
+
+/* Custom dark scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, oklch(0.28 0.005 240));
+  border-radius: 3px;
+  transition: background 0.3s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.38 0.005 240);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, oklch(0.28 0.005 240)) transparent;
+}
+
+/* Canvas dot-grid background */
+.canvas-workspace {
+  background-color: var(--workspace-bg, oklch(0.1 0.005 240));
+  background-image: radial-gradient(
+    circle,
+    var(--workspace-dot, oklch(0.28 0.005 240)) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+  transition: background-color 0.35s ease;
+}
+
+/* Glassmorphism panel utility */
+.glass-panel {
+  background: oklch(0.13 0.006 240 / 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(0.25 0.005 240);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Range input styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 4px;
+  background: oklch(0.25 0.005 240);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(0.72 0.15 200);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(0.72 0.15 200);
+  cursor: pointer;
+  border: none;
+}
+
+/* Color picker */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
+/* Tooltip fade-in */
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Page-bar scrollbar hidden */
+.page-bar-scroll {
+  scrollbar-width: none;
+}
+.page-bar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out;
+}
+
+/* Floating panel open animation */
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.floating-panel {
+  animation: float-in 0.2s ease-out;
+}
+
+/* Theme transition utility */
+.theme-transition {
+  transition: background-color 0.35s ease, color 0.3s ease, border-color 0.3s
+    ease;
+}
+
+/* Layer hover animation */
+.layer-hover {
+  transition: background 0.15s ease;
+}
+
+/* Canvas workspace light theme */
+.canvas-workspace-light {
+  background-color: var(--workspace-bg, #e8e8ec);
+  background-image: radial-gradient(
+    circle,
+    var(--workspace-dot, #c8c8d0) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+}
+
+/* Smooth tool selection */
+.tool-btn {
+  transition: all 0.15s ease;
+}
+
+/* Settings select styling */
+select option {
+  background: #1a1a1e;
+  color: #e8e8ec;
+}
+
+/* Add page bounce animation */
+@keyframes page-btn-bounce {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.18);
+  }
+  65% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.add-page-bounce {
+  animation: page-btn-bounce 0.38s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+}
+
+/* Layer lock transition */
+.layer-locked {
+  opacity: 0.55;
+}
