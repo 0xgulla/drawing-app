@@ -1,17 +1,11 @@
 import { Heart } from "lucide-react";
-import type React from "react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CreditModal from "./components/CreditModal";
 import DrawingCanvas, {
   type BrushShape,
   type DrawingCanvasHandle,
   type LayerData,
+  type LayerFilterData,
 } from "./components/DrawingCanvas";
 import type { VectorShapeType } from "./components/DrawingCanvas";
 import FloatingBrushPanel from "./components/FloatingBrushPanel";
@@ -20,16 +14,18 @@ import FloatingSettingsModal from "./components/FloatingSettingsModal";
 import FloatingShapePanel from "./components/FloatingShapePanel";
 import FloatingTextPanel from "./components/FloatingTextPanel";
 import type { TextOptions } from "./components/FloatingTextPanel";
-import type { LayerFilter } from "./components/LayersPanel";
-import type { Layer } from "./components/LayersPanel";
+import LandingPage from "./components/LandingPage";
+import type { Layer, LayerFilter } from "./components/LayersPanel";
 import LeftToolbar, { type DrawingTool } from "./components/LeftToolbar";
 import PageBar from "./components/PageBar";
+import PageTransitionLoader from "./components/PageTransitionLoader";
 import RightPanel from "./components/RightPanel";
 import SelectionOverlay from "./components/SelectionOverlay";
 import TopNavBar from "./components/TopNavBar";
+import UserGuidePage from "./components/UserGuidePage";
 
 export type CanvasTheme = "light" | "dark";
-export type ColorTheme = "light" | "dark";
+export type ColorTheme = "light" | "dark" | "purple";
 export type UITheme = "default" | "purple";
 export type PageSizeKey = "A4" | "A5" | "Letter" | "Square" | "Custom";
 
@@ -43,7 +39,7 @@ export const PAGE_SIZE_MAP: Record<PageSizeKey, PageDimensions> = {
   A4: { width: 794, height: 1123, label: "A4" },
   A5: { width: 559, height: 794, label: "A5" },
   Letter: { width: 816, height: 1056, label: "Letter" },
-  Square: { width: 800, height: 800, label: "Square" },
+  Square: { width: 1024, height: 1024, label: "Square" },
   Custom: { width: 1200, height: 800, label: "Custom" },
 };
 
@@ -84,14 +80,14 @@ const UI_ACCENT_MAP: Record<UITheme, UIAccent> = {
   },
 };
 
-const CANVAS_BG_MAP: Record<CanvasTheme, string> = {
+const _CANVAS_BG_MAP: Record<CanvasTheme, string> = {
   light: "#ffffff",
   dark: "#1a1a2e",
 };
 
-function createDefaultLayer(
-  id: number,
-): Layer & { strokes: LayerData["strokes"] } {
+type FullLayer = Layer & { strokes: LayerData["strokes"] };
+
+function createDefaultLayer(id: number): FullLayer {
   return {
     id,
     name: `Layer ${id}`,
@@ -102,1378 +98,1031 @@ function createDefaultLayer(
   };
 }
 
-interface PageLayerState {
-  layers: (Layer & { strokes: LayerData["strokes"] })[];
-  activeLayerId: number;
+function createDefaultPage(pageId: number) {
+  return {
+    id: pageId,
+    name: `Page ${pageId}`,
+    layers: [createDefaultLayer(1)],
+    activeLayerId: 1,
+    canvasSize: PAGE_SIZE_MAP.Square,
+    pageColor: "transparent",
+    thumbnail: undefined as string | undefined,
+  };
 }
 
-interface Page {
-  id: number;
-  name: string;
-  thumbnail?: string;
-  layerState: PageLayerState;
+/** Merge DrawingCanvas LayerData updates back into our FullLayer array */
+function mergeLayerData(
+  current: FullLayer[],
+  updated: LayerData[],
+): FullLayer[] {
+  return current.map((l) => {
+    const u = updated.find((ul) => ul.id === l.id);
+    if (!u) return l;
+    return { ...l, strokes: u.strokes, visible: u.visible, opacity: u.opacity };
+  });
 }
 
-export default function App() {
-  const [brushColor, setBrushColor] = useState("#38bdf8");
-  const [brushSize, setBrushSize] = useState(4);
-  const [brushShape, setBrushShape] = useState<BrushShape>("circle");
-  const [activeTool, setActiveTool] = useState<DrawingTool>("brush");
-  const [opacity, setOpacity] = useState(100);
-  const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>("dark");
-  const [colorTheme, setColorTheme] = useState<ColorTheme>("dark");
-  const [pageColor, setPageColor] = useState("#ffffff");
-  const [profileImage, setProfileImage] = useState<string | null>(null);
-  const [layerFilters, setLayerFilters] = useState<Record<number, LayerFilter>>(
-    {},
+export default function App({ onGoHome }: { onGoHome?: () => void } = {}) {
+  // ─── Navigation ───────────────────────────────────────────────────────
+  const [currentView, setCurrentView] = useState<"landing" | "app" | "guide">(
+    "landing",
   );
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  const navigateWithLoader = useCallback(
+    (view: "landing" | "app" | "guide") => {
+      setIsTransitioning(true);
+      setTimeout(() => {
+        setCurrentView(view);
+        setIsTransitioning(false);
+      }, 2300);
+    },
+    [],
+  );
+
+  // ─── Page / Layer state ───────────────────────────────────────────────
+  const [pages, setPages] = useState(() => [createDefaultPage(1)]);
+  const [activePageId, setActivePageId] = useState(1);
+  const [layers, setLayers] = useState<FullLayer[]>(() => [
+    createDefaultLayer(1),
+  ]);
+  const [activeLayerId, setActiveLayerId] = useState<number>(1);
+  const [pageSizeKey, setPageSizeKey] = useState<PageSizeKey>("Square");
+  const [pageColor, setPageColor] = useState("#ffffff");
   const [layerThumbnails, setLayerThumbnails] = useState<
     Record<number, string>
   >({});
-  const [brushSmoothing, setBrushSmoothing] = useState(50);
-  const [brushHardness, setBrushHardness] = useState(100);
-  const [pressureSim, setPressureSim] = useState(false);
-  const [showBrushPanel, setShowBrushPanel] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [uiTheme, setUiTheme] = useState<UITheme>("default");
-  const [pageSizeKey, setPageSizeKey] = useState<PageSizeKey>("A4");
-  const [projectName, setProjectName] = useState("Untitled Project");
-  const [zoom, setZoom] = useState(100);
-  const [pages, setPages] = useState<Page[]>([
-    {
-      id: 1,
-      name: "Page 1",
-      layerState: { layers: [createDefaultLayer(1)], activeLayerId: 1 },
-    },
-  ]);
-  const [activePageId, setActivePageId] = useState(1);
-  const [showCreditModal, setShowCreditModal] = useState(false);
-  const [shapeToolType, setShapeToolType] = useState<VectorShapeType>("rect");
-  const [showShapePanel, setShowShapePanel] = useState(false);
-  const [eyedropperColor, setEyedropperColor] = useState<string | null>(null);
-  const [eyedropperPos, setEyedropperPos] = useState({ x: 0, y: 0 });
-  const [colorHistory, setColorHistory] = useState<string[]>([]);
-  const prevBrushColorRef = useRef(brushColor);
-  const [startedPageIds, setStartedPageIds] = useState<Set<number>>(new Set());
-  const [overlayDismissed, setOverlayDismissed] = useState(false);
-  const canvasRef = useRef<DrawingCanvasHandle>(null);
 
-  // Eraser state
+  const saveLayersToPage = useCallback(
+    (newLayers: FullLayer[]) => {
+      setPages((prev) =>
+        prev.map((p) =>
+          p.id === activePageId
+            ? { ...p, layers: newLayers, activeLayerId }
+            : p,
+        ),
+      );
+    },
+    [activePageId, activeLayerId],
+  );
+
+  useEffect(() => {
+    const page = pages.find((p) => p.id === activePageId);
+    if (page) {
+      setLayers(page.layers);
+      setActiveLayerId(page.activeLayerId);
+    }
+    // Clear undo/redo history when page changes
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [activePageId, pages]); // biome-ignore lint/correctness/useExhaustiveDependencies: intentional - only run on page change
+
+  // ─── Tool state ────────────────────────────────────────────────────────
+  const [activeTool, setActiveTool] = useState<DrawingTool>("brush");
+  const [brushColor, setBrushColor] = useState("#a855f7");
+  const [brushSize, setBrushSize] = useState(8);
+  const [brushOpacity, setBrushOpacity] = useState(100);
+  const [brushHardness, setBrushHardness] = useState(100);
+  const [brushShape, setBrushShape] = useState<BrushShape>("circle");
+  const [brushSmoothing, setBrushSmoothing] = useState(50);
+  const [pressureSim, setPressureSim] = useState(false);
   const [eraserSize, setEraserSize] = useState(20);
   const [eraserSoftness, setEraserSoftness] = useState<"hard" | "soft">("hard");
-  const [showEraserPanel, setShowEraserPanel] = useState(false);
-  // eraserCursorPos removed - cursor handled in DrawingCanvas overlay
-  const [textPanel, setTextPanel] = useState<{
+  const fillTolerance = 32;
+  const [zoom, setZoom] = useState(100);
+  const [shapeType, setShapeType] = useState<VectorShapeType>("rect");
+  const [colorHistory, setColorHistory] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("colorHistory") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  // ─── Text tool ─────────────────────────────────────────────────────────
+  const [textClickPos, setTextClickPos] = useState<{
     canvasX: number;
     canvasY: number;
     screenX: number;
     screenY: number;
   } | null>(null);
-  const [fillTolerance, setFillTolerance] = useState(32);
-  const [activeSelectionRect, setActiveSelectionRect] = useState<{
+
+  // ─── Selection rect (shared between canvas and overlay) ────────────────
+  const [selectionRect, setSelectionRect] = useState<{
     x: number;
     y: number;
     w: number;
     h: number;
   } | null>(null);
 
-  // Pan state
-  const workspaceRef = useRef<HTMLDivElement>(null);
-  const [panDragging, setPanDragging] = useState(false);
-  const panStartRef = useRef<{
-    mouseX: number;
-    mouseY: number;
-    scrollX: number;
-    scrollY: number;
-  } | null>(null);
-  const zoomRef = useRef(zoom);
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
-
-  const canvasBg = pageColor;
+  // ─── Theme ─────────────────────────────────────────────────────────────
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(
+    () => (localStorage.getItem("colorTheme") as ColorTheme) ?? "dark",
+  );
+  const [canvasTheme, setCanvasTheme] = useState<CanvasTheme>(
+    () => (localStorage.getItem("canvasTheme") as CanvasTheme) ?? "dark",
+  );
+  const uiTheme: UITheme = colorTheme === "purple" ? "purple" : "default";
   const uiAccent = UI_ACCENT_MAP[uiTheme];
-  const pageSize = PAGE_SIZE_MAP[pageSizeKey];
 
-  const activePage = pages.find((p) => p.id === activePageId)!;
-  const { layers: activeLayers, activeLayerId } = activePage.layerState;
+  useEffect(() => {
+    localStorage.setItem("colorTheme", colorTheme);
+    localStorage.setItem("canvasTheme", canvasTheme);
+  }, [colorTheme, canvasTheme]);
 
-  const canvasLayers: LayerData[] = activeLayers.map((l) => ({
-    id: l.id,
-    strokes: l.strokes,
-    visible: l.visible,
-    opacity: l.opacity,
-  }));
-
-  const layerPanelLayers: Layer[] = activeLayers.map((l) => ({
-    id: l.id,
-    name: l.name,
-    visible: l.visible,
-    opacity: l.opacity,
-    locked: l.locked ?? false,
-  }));
-
-  const activeLayerStrokeCount =
-    activeLayers.find((l) => l.id === activeLayerId)?.strokes.length ?? 0;
-  const activeLayerLocked =
-    activeLayers.find((l) => l.id === activeLayerId)?.locked ?? false;
-  const totalStrokeCount = activeLayers.reduce(
-    (sum, l) => sum + l.strokes.length,
-    0,
-  );
-
-  const setActiveLayerId = useCallback(
-    (id: number) => {
-      setPages((prev) =>
-        prev.map((p) =>
-          p.id === activePageId
-            ? { ...p, layerState: { ...p.layerState, activeLayerId: id } }
-            : p,
-        ),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleLayersChange = useCallback(
-    (newLayers: LayerData[]) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const mergedLayers = p.layerState.layers.map((l) => {
-            const updated = newLayers.find((nl) => nl.id === l.id);
-            if (updated) {
-              return {
-                ...l,
-                strokes: updated.strokes,
-                visible: updated.visible,
-                opacity: updated.opacity,
-              };
-            }
-            return l;
-          });
-          return {
-            ...p,
-            layerState: { ...p.layerState, layers: mergedLayers },
-          };
-        }),
-      );
-    },
-    [activePageId],
-  );
+  const handleColorThemeChange = useCallback((theme: ColorTheme) => {
+    setColorTheme(theme);
+  }, []);
 
   const handleUiThemeToggle = useCallback(() => {
-    setUiTheme((prev) => (prev === "default" ? "purple" : "default"));
+    setColorTheme((prev) => (prev === "purple" ? "dark" : "purple"));
   }, []);
 
-  const handleThemeChange = useCallback(
-    (newTheme: CanvasTheme) => {
-      setCanvasTheme(newTheme);
-      const newBg = CANVAS_BG_MAP[newTheme];
-      const isColorDark = (hex: string) => {
-        const r = Number.parseInt(hex.slice(1, 3), 16);
-        const g = Number.parseInt(hex.slice(3, 5), 16);
-        const b = Number.parseInt(hex.slice(5, 7), 16);
-        return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.25;
-      };
-      if (
-        newBg.startsWith("#") &&
-        isColorDark(newBg) &&
-        brushColor.startsWith("#") &&
-        isColorDark(brushColor)
-      ) {
-        setBrushColor("#ffffff");
-      } else if (
-        !isColorDark(newBg.startsWith("#") ? newBg : "#ffffff") &&
-        brushColor === "#ffffff"
-      ) {
-        setBrushColor("#1a1a1a");
-      }
-    },
-    [brushColor],
+  // ─── Profile ───────────────────────────────────────────────────────────
+  const [profileImage, setProfileImage] = useState<string | null>(() =>
+    localStorage.getItem("profileImage"),
   );
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-      e.preventDefault();
-      canvasRef.current?.undo?.();
-    }
-    if (
-      (e.ctrlKey || e.metaKey) &&
-      (e.key === "y" || (e.shiftKey && e.key === "z"))
-    ) {
-      e.preventDefault();
-      canvasRef.current?.redo?.();
-    }
-    if ((e.target as HTMLElement).tagName === "INPUT") return;
-    const toolKeys: Record<string, DrawingTool> = {
-      b: "brush",
-      B: "brush",
-      e: "eraser",
-      E: "eraser",
-      s: "select",
-      S: "select",
-      f: "fill",
-      F: "fill",
-      t: "text",
-      T: "text",
-      v: "select",
-      V: "select",
-      i: "colorpicker",
-      I: "colorpicker",
-      h: "pan",
-      H: "pan",
-    };
-    if (toolKeys[e.key]) {
-      const tool = toolKeys[e.key];
-      setActiveTool(tool);
-      if (tool === "eraser") setShowEraserPanel(true);
-      if (tool === "brush") setShowBrushPanel(true);
-    }
-    if (e.key === "]") setBrushSize((s) => Math.min(80, s + 2));
-    if (e.key === "[") setBrushSize((s) => Math.max(1, s - 2));
+  // ─── Panel visibility ──────────────────────────────────────────────────
+  const [showBrushPanel, setShowBrushPanel] = useState(false);
+  const [showEraserPanel, setShowEraserPanel] = useState(false);
+  const [showShapePanel, setShowShapePanel] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+
+  // ─── Canvas ref ────────────────────────────────────────────────────────
+  const canvasRef = useRef<DrawingCanvasHandle>(null);
+
+  // ─── Pan (hand tool) ──────────────────────────────────────────────────
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
+
+  // ─── Eyedropper hover preview ─────────────────────────────────────────
+  const [eyedropperPreview, setEyedropperPreview] = useState<{
+    color: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // ─── Undo / Redo ───────────────────────────────────────────────────────
+  const [undoStack, setUndoStack] = useState<FullLayer[][]>([]);
+  const [redoStack, setRedoStack] = useState<FullLayer[][]>([]);
+
+  const pushUndo = useCallback((snapshot: FullLayer[]) => {
+    setUndoStack((prev) => [...prev.slice(-30), snapshot]);
+    setRedoStack([]);
   }, []);
 
-  // Init theme from localStorage before paint
-  useLayoutEffect(() => {
-    const saved = localStorage.getItem("drawingAppTheme") || "dark";
-    document.documentElement.setAttribute("data-theme", saved);
-    // Sync colorTheme state
-    if (saved === "light" || saved === "dark")
-      setColorTheme(saved as ColorTheme);
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
-
-  const handleClear = useCallback(() => {
-    // Clear all layers on the active page
-    canvasRef.current?.clearCanvas();
-    // Also wipe strokes from all layers so they don't re-render on top
-    setPages((prev) =>
-      prev.map((p) => {
-        if (p.id !== activePageId) return p;
+  // Called by DrawingCanvas just BEFORE committing a stroke — saves pre-stroke state
+  const handleStrokeEnd = useCallback((preStrokeSnapshot: LayerData[]) => {
+    // Convert LayerData[] to FullLayer[] for history
+    setLayers((currentLayers) => {
+      const snapshot = currentLayers.map((l) => {
+        const sd = preStrokeSnapshot.find((d) => d.id === l.id);
+        if (!sd) return l;
         return {
-          ...p,
-          layerState: {
-            ...p.layerState,
-            layers: p.layerState.layers.map((l) => ({ ...l, strokes: [] })),
-          },
+          ...l,
+          strokes: sd.strokes,
+          visible: sd.visible,
+          opacity: sd.opacity,
         };
-      }),
-    );
-  }, [activePageId]);
+      });
+      setUndoStack((prev) => {
+        const next = [...prev, snapshot];
+        if (next.length > 30) next.shift();
+        return next;
+      });
+      setRedoStack([]);
+      return currentLayers; // don't change layers, just save snapshot
+    });
+  }, []);
 
   const handleUndo = useCallback(() => {
-    canvasRef.current?.undo?.();
-  }, []);
-
-  const handleSave = useCallback(() => {
-    const canvas = canvasRef.current?.getCanvas();
-    if (!canvas) return;
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const exportCtx = exportCanvas.getContext("2d");
-    if (!exportCtx) return;
-    exportCtx.fillStyle = canvasBg;
-    exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    exportCtx.drawImage(canvas, 0, 0);
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    const filename = `drawing-page${activePageId}-${timestamp}.png`;
-    const dataUrl = exportCanvas.toDataURL("image/png");
-    const link = document.createElement("a");
-    link.href = dataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [activePageId, canvasBg]);
-
-  const handleNewProject = useCallback(() => {
-    setPages((prev) => {
-      const newId =
-        prev.length > 0 ? Math.max(...prev.map((p) => p.id)) + 1 : 2;
-      setActivePageId(newId);
-      setOverlayDismissed(false);
-      return [
-        ...prev,
-        {
-          id: newId,
-          name: `Page ${newId}`,
-          layerState: { layers: [createDefaultLayer(1)], activeLayerId: 1 },
-        },
-      ];
+    setUndoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setRedoStack((r) => [...r, layers]);
+      setLayers(last);
+      saveLayersToPage(last);
+      return prev.slice(0, -1);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers, saveLayersToPage]);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev[prev.length - 1];
+      setUndoStack((u) => [...u, layers]);
+      setLayers(next);
+      saveLayersToPage(next);
+      return prev.slice(0, -1);
+    });
+  }, [layers, saveLayersToPage]);
+
+  // ─── Color history ─────────────────────────────────────────────────────
+  const addColorToHistory = useCallback((color: string) => {
+    setColorHistory((prev) => {
+      const filtered = prev.filter((c) => c !== color);
+      const next = [color, ...filtered].slice(0, 30);
+      localStorage.setItem("colorHistory", JSON.stringify(next));
+      return next;
+    });
   }, []);
 
-  const handleSaveDrw = useCallback(
-    (customName?: string) => {
-      const data = {
-        version: 1,
-        projectName,
-        pageSizeKey,
-        settings: { canvasTheme, pageColor },
-        pages: pages.map((p) => ({
-          id: p.id,
-          name: p.name,
-          layerState: {
-            activeLayerId: p.layerState.activeLayerId,
-            layers: p.layerState.layers.map((l) => ({
-              id: l.id,
-              name: l.name,
-              visible: l.visible,
-              opacity: l.opacity,
-              locked: l.locked,
-              strokes: l.strokes,
-            })),
-          },
-        })),
-      };
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${customName || projectName || "drawing"}.drw`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    },
-    [pages, projectName, pageSizeKey, canvasTheme, pageColor],
+  // ─── Layer management ─────────────────────────────────────────────────
+  const [layerFilters, setLayerFilters] = useState<Record<number, LayerFilter>>(
+    {},
   );
 
-  const handleSaveAs = useCallback(() => {
-    const name = window.prompt("Save project as:", projectName || "drawing");
-    if (name !== null) handleSaveDrw(name);
-  }, [handleSaveDrw, projectName]);
+  // Called by DrawingCanvas when strokes change (LayerData[] — no name/locked)
+  const handleLayersChange = useCallback(
+    (newLayerData: LayerData[]) => {
+      setLayers((prev) => {
+        const merged = mergeLayerData(prev, newLayerData);
+        saveLayersToPage(merged);
+        return merged;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleLayerFilterChange = useCallback(
+    (id: number, filter: Partial<LayerFilter>) => {
+      const defaults: LayerFilter = {
+        blur: 0,
+        brightness: 100,
+        contrast: 100,
+        opacity: 100,
+      };
+      setLayerFilters((prev) => ({
+        ...prev,
+        [id]: { ...defaults, ...prev[id], ...filter } as LayerFilter,
+      }));
+    },
+    [],
+  );
+
+  const handleAddLayer = useCallback(() => {
+    setLayers((prev) => {
+      const newId = Math.max(...prev.map((l) => l.id), 0) + 1;
+      const newLayer = createDefaultLayer(newId);
+      const next = [...prev, newLayer];
+      saveLayersToPage(next);
+      setActiveLayerId(newId);
+      return next;
+    });
+  }, [saveLayersToPage]);
+
+  const handleDeleteLayer = useCallback(
+    (id: number) => {
+      setLayers((prev) => {
+        if (prev.length <= 1) return prev;
+        const next = prev.filter((l) => l.id !== id);
+        saveLayersToPage(next);
+        if (activeLayerId === id) setActiveLayerId(next[next.length - 1].id);
+        return next;
+      });
+    },
+    [activeLayerId, saveLayersToPage],
+  );
+
+  const handleToggleVisible = useCallback(
+    (id: number) => {
+      setLayers((prev) => {
+        const next = prev.map((l) =>
+          l.id === id ? { ...l, visible: !l.visible } : l,
+        );
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleRenameLayer = useCallback(
+    (id: number, name: string) => {
+      setLayers((prev) => {
+        const next = prev.map((l) => (l.id === id ? { ...l, name } : l));
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleLayerOpacityChange = useCallback(
+    (id: number, opacity: number) => {
+      setLayers((prev) => {
+        const next = prev.map((l) => (l.id === id ? { ...l, opacity } : l));
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleMoveLayer = useCallback(
+    (id: number, direction: "up" | "down") => {
+      setLayers((prev) => {
+        const idx = prev.findIndex((l) => l.id === id);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        const swap = direction === "up" ? idx - 1 : idx + 1;
+        if (swap < 0 || swap >= next.length) return prev;
+        [next[idx], next[swap]] = [next[swap], next[idx]];
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleDuplicateLayer = useCallback(
+    (id: number) => {
+      setLayers((prev) => {
+        const src = prev.find((l) => l.id === id);
+        if (!src) return prev;
+        const newId = Math.max(...prev.map((l) => l.id), 0) + 1;
+        const copy = {
+          ...src,
+          id: newId,
+          name: `${src.name} Copy`,
+          strokes: [...src.strokes],
+        };
+        const idx = prev.findIndex((l) => l.id === id);
+        const next = [...prev.slice(0, idx + 1), copy, ...prev.slice(idx + 1)];
+        saveLayersToPage(next);
+        setActiveLayerId(newId);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleReorderLayers = useCallback(
+    (newOrder: number[]) => {
+      setLayers((prev) => {
+        const map = new Map(prev.map((l) => [l.id, l]));
+        const next = newOrder
+          .map((id) => map.get(id))
+          .filter(Boolean) as FullLayer[];
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  const handleLockLayer = useCallback(
+    (id: number) => {
+      setLayers((prev) => {
+        const next = prev.map((l) =>
+          l.id === id ? { ...l, locked: !l.locked } : l,
+        );
+        saveLayersToPage(next);
+        return next;
+      });
+    },
+    [saveLayersToPage],
+  );
+
+  // ─── Page management ──────────────────────────────────────────────────
+  const handleAddPage = useCallback(() => {
+    const newId = Math.max(...pages.map((p) => p.id), 0) + 1;
+    setPages((prev) => [...prev, createDefaultPage(newId)]);
+    setActivePageId(newId);
+    setPanOffset({ x: 0, y: 0 });
+  }, [pages]);
+
+  const handleDeletePage = useCallback(
+    (pageId: number) => {
+      if (pages.length <= 1) return;
+      setPages((prev) => prev.filter((p) => p.id !== pageId));
+      if (activePageId === pageId) {
+        const remaining = pages.filter((p) => p.id !== pageId);
+        setActivePageId(remaining[0].id);
+      }
+    },
+    [pages, activePageId],
+  );
+
+  const handleRenamePage = useCallback((pageId: number, name: string) => {
+    setPages((prev) => prev.map((p) => (p.id === pageId ? { ...p, name } : p)));
+  }, []);
+
+  const handleDuplicatePage = useCallback(
+    (pageId: number) => {
+      const page = pages.find((p) => p.id === pageId);
+      if (!page) return;
+      const newId = Math.max(...pages.map((p) => p.id), 0) + 1;
+      setPages((prev) => [
+        ...prev,
+        {
+          ...page,
+          id: newId,
+          name: `${page.name} Copy`,
+          layers: page.layers.map((l) => ({ ...l, strokes: [...l.strokes] })),
+        },
+      ]);
+      setActivePageId(newId);
+    },
+    [pages],
+  );
+
+  const handleSelectPage = useCallback(
+    (pageId: number) => {
+      setPages((prev) =>
+        prev.map((p) =>
+          p.id === activePageId ? { ...p, layers, activeLayerId } : p,
+        ),
+      );
+      setActivePageId(pageId);
+    },
+    [activePageId, layers, activeLayerId],
+  );
+
+  // ─── New project ──────────────────────────────────────────────────────
+  const handleNewProject = useCallback(() => {
+    const fresh = [createDefaultPage(1)];
+    setPages(fresh);
+    setActivePageId(1);
+    setLayers([createDefaultLayer(1)]);
+    setActiveLayerId(1);
+    setUndoStack([]);
+    setRedoStack([]);
+    setPanOffset({ x: 0, y: 0 });
+    canvasRef.current?.clearCanvas();
+  }, []);
+
+  // ─── Save / Export ────────────────────────────────────────────────────
+  const handleExport = useCallback(() => {
+    const canvas = canvasRef.current?.getCanvas();
+    if (!canvas) return;
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = "sketchora-export.png";
+    a.click();
+  }, []);
 
   const handleExportPNG = useCallback(() => {
     const canvas = canvasRef.current?.getCanvas();
     if (!canvas) return;
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext("2d");
+    const tmp = document.createElement("canvas");
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const ctx = tmp.getContext("2d");
     if (!ctx) return;
-    // Transparent background: do NOT fillRect
     ctx.drawImage(canvas, 0, 0);
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const link = document.createElement("a");
-    link.href = exportCanvas.toDataURL("image/png");
-    link.download = `${projectName || "drawing"}-${ts}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [projectName]);
+    const a = document.createElement("a");
+    a.href = tmp.toDataURL("image/png");
+    a.download = "sketchora.png";
+    a.click();
+  }, []);
 
   const handleExportJPG = useCallback(() => {
     const canvas = canvasRef.current?.getCanvas();
     if (!canvas) return;
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = canvas.width;
-    exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext("2d");
+    const tmp = document.createElement("canvas");
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const ctx = tmp.getContext("2d");
     if (!ctx) return;
-    // White background for JPG
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.fillRect(0, 0, tmp.width, tmp.height);
     ctx.drawImage(canvas, 0, 0);
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const link = document.createElement("a");
-    link.href = exportCanvas.toDataURL("image/jpeg", 0.92);
-    link.download = `${projectName || "drawing"}-${ts}.jpg`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, [projectName]);
+    const a = document.createElement("a");
+    a.href = tmp.toDataURL("image/jpeg", 0.92);
+    a.download = "sketchora.jpg";
+    a.click();
+  }, []);
+
+  const handleSaveDrw = useCallback(() => {
+    const data = JSON.stringify({
+      pages,
+      activePageId,
+      pageSizeKey,
+      pageColor,
+      colorTheme,
+    });
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sketchora-project.drw";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [pages, activePageId, pageSizeKey, pageColor, colorTheme]);
+
+  const handleSaveAs = useCallback(() => {
+    const name =
+      prompt("File name:", "sketchora-project") ?? "sketchora-project";
+    const data = JSON.stringify({
+      pages,
+      activePageId,
+      pageSizeKey,
+      pageColor,
+      colorTheme,
+    });
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.drw`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [pages, activePageId, pageSizeKey, pageColor, colorTheme]);
 
   const handleImportImage = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      if (!dataUrl) return;
+      const src = ev.target?.result as string;
       const img = new Image();
       img.onload = () => {
         const canvas = canvasRef.current?.getCanvas();
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        const dpr = window.devicePixelRatio || 1;
-        const canvasW = canvas.width / dpr;
-        const canvasH = canvas.height / dpr;
-        let drawW = img.width;
-        let drawH = img.height;
-        if (drawW > canvasW || drawH > canvasH) {
-          const scale = Math.min(canvasW / drawW, canvasH / drawH);
-          drawW = drawW * scale;
-          drawH = drawH * scale;
-        }
-        const x = (canvasW - drawW) / 2;
-        const y = (canvasH - drawH) / 2;
-        canvasRef.current?.saveHistory?.();
-        ctx.drawImage(img, x, y, drawW, drawH);
+        const scale = Math.min(
+          canvas.width / img.width,
+          canvas.height / img.height,
+          1,
+        );
+        const w = img.width * scale;
+        const h = img.height * scale;
+        const x = (canvas.width - w) / 2;
+        const y = (canvas.height - h) / 2;
+        ctx.drawImage(img, x, y, w, h);
         canvasRef.current?.bakeToFlatLayer?.();
       };
-      img.src = dataUrl;
+      img.src = src;
     };
     reader.readAsDataURL(file);
   }, []);
 
-  const handleStartDrawingClick = useCallback(() => {
-    setOverlayDismissed(false);
-    setShowCreditModal(true);
+  const handleClearCanvas = useCallback(() => {
+    pushUndo(layers);
+    canvasRef.current?.clearCanvas();
+  }, [layers, pushUndo]);
+
+  // ─── Tool selection ───────────────────────────────────────────────────
+  const handleToolChange = useCallback((tool: DrawingTool) => {
+    setActiveTool(tool);
+    setShowBrushPanel(tool === "brush");
+    setShowEraserPanel(tool === "eraser");
+    setShowShapePanel(tool === "shape");
+    if (tool !== "text") setTextClickPos(null);
   }, []);
 
-  const handleModalStartDrawing = useCallback(() => {
-    setShowCreditModal(false);
-    setOverlayDismissed(true);
-    setStartedPageIds((prev) => {
-      const next = new Set(prev);
-      next.add(activePageId);
-      return next;
-    });
-  }, [activePageId]);
-
-  const handleModalClose = useCallback(() => {
-    setShowCreditModal(false);
-    setOverlayDismissed(true);
-    setStartedPageIds((prev) => {
-      const next = new Set(prev);
-      next.add(activePageId);
-      return next;
-    });
-  }, [activePageId]);
-
-  const handleRenamePage = useCallback((id: number, newName: string) => {
-    setPages((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, name: newName.trim() || p.name } : p,
-      ),
-    );
-  }, []);
-
-  const handleAddPage = useCallback(() => {
-    setPages((prev) => {
-      const newId =
-        prev.length > 0 ? Math.max(...prev.map((p) => p.id)) + 1 : 1;
-      setActivePageId(newId);
-      setOverlayDismissed(false);
-      return [
-        ...prev,
-        {
-          id: newId,
-          name: `Page ${newId}`,
-          layerState: { layers: [createDefaultLayer(1)], activeLayerId: 1 },
-        },
-      ];
-    });
-  }, []);
-
-  const handleDeletePage = useCallback(
-    (id: number) => {
-      setPages((prev) => {
-        if (prev.length <= 1) return prev;
-        const filtered = prev.filter((p) => p.id !== id);
-        if (id === activePageId) {
-          const deletedIndex = prev.findIndex((p) => p.id === id);
-          const nextPage =
-            filtered[Math.min(deletedIndex, filtered.length - 1)];
-          setActivePageId(nextPage.id);
-        }
-        return filtered;
-      });
-      setStartedPageIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    },
-    [activePageId],
-  );
-
-  const handleDuplicatePage = useCallback((id: number) => {
-    setPages((prev) => {
-      const src = prev.find((p) => p.id === id);
-      if (!src) return prev;
-      const newId = Math.max(...prev.map((p) => p.id)) + 1;
-      const copy: Page = {
-        ...src,
-        id: newId,
-        name: `${src.name} copy`,
-        thumbnail: src.thumbnail,
-        layerState: {
-          ...src.layerState,
-          layers: src.layerState.layers.map((l) => ({
-            ...l,
-            strokes: [...l.strokes],
-          })),
-        },
-      };
-      const idx = prev.findIndex((p) => p.id === id);
-      const newPages = [...prev];
-      newPages.splice(idx + 1, 0, copy);
-      setActivePageId(newId);
-      return newPages;
-    });
-  }, []);
-
-  const handleLayerFilterChange = useCallback(
-    (id: number, filter: Partial<LayerFilter>) => {
-      setLayerFilters((prev) => {
-        const existing = prev[id] ?? {
-          blur: 0,
-          brightness: 100,
-          contrast: 100,
-          opacity: 100,
-        };
-        return { ...prev, [id]: { ...existing, ...filter } };
-      });
+  const handleTextClick = useCallback(
+    (canvasX: number, canvasY: number, screenX: number, screenY: number) => {
+      setTextClickPos({ canvasX, canvasY, screenX, screenY });
     },
     [],
   );
 
-  const handleAddLayer = useCallback(() => {
-    setPages((prev) =>
-      prev.map((p) => {
-        if (p.id !== activePageId) return p;
-        const maxId = Math.max(...p.layerState.layers.map((l) => l.id));
-        const newLayer = createDefaultLayer(maxId + 1);
-        return {
-          ...p,
-          layerState: {
-            layers: [...p.layerState.layers, newLayer],
-            activeLayerId: newLayer.id,
-          },
-        };
-      }),
-    );
-  }, [activePageId]);
-
-  const handleDeleteLayer = useCallback(
-    (id: number) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          if (p.layerState.layers.length <= 1) return p;
-          const filtered = p.layerState.layers.filter((l) => l.id !== id);
-          const newActiveId =
-            p.layerState.activeLayerId === id
-              ? filtered[filtered.length - 1].id
-              : p.layerState.activeLayerId;
-          return {
-            ...p,
-            layerState: { layers: filtered, activeLayerId: newActiveId },
-          };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleToggleLayerVisible = useCallback(
-    (id: number) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const newLayers = p.layerState.layers.map((l) =>
-            l.id === id ? { ...l, visible: !l.visible } : l,
-          );
-          return { ...p, layerState: { ...p.layerState, layers: newLayers } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleLockLayer = useCallback(
-    (id: number) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const newLayers = p.layerState.layers.map((l) =>
-            l.id === id ? { ...l, locked: !l.locked } : l,
-          );
-          return { ...p, layerState: { ...p.layerState, layers: newLayers } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleRenameLayer = useCallback(
-    (id: number, name: string) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const newLayers = p.layerState.layers.map((l) =>
-            l.id === id ? { ...l, name: name.trim() || l.name } : l,
-          );
-          return { ...p, layerState: { ...p.layerState, layers: newLayers } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleLayerOpacity = useCallback(
-    (id: number, opacityVal: number) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const newLayers = p.layerState.layers.map((l) =>
-            l.id === id ? { ...l, opacity: opacityVal } : l,
-          );
-          return { ...p, layerState: { ...p.layerState, layers: newLayers } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleMoveLayer = useCallback(
-    (id: number, direction: "up" | "down") => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const idx = p.layerState.layers.findIndex((l) => l.id === id);
-          if (idx < 0) return p;
-          const newLayers = [...p.layerState.layers];
-          if (direction === "up" && idx < newLayers.length - 1) {
-            [newLayers[idx], newLayers[idx + 1]] = [
-              newLayers[idx + 1],
-              newLayers[idx],
-            ];
-          } else if (direction === "down" && idx > 0) {
-            [newLayers[idx], newLayers[idx - 1]] = [
-              newLayers[idx - 1],
-              newLayers[idx],
-            ];
-          }
-          return { ...p, layerState: { ...p.layerState, layers: newLayers } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleDuplicateLayer = useCallback(
-    (id: number) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const idx = p.layerState.layers.findIndex((l) => l.id === id);
-          if (idx < 0) return p;
-          const src = p.layerState.layers[idx];
-          const maxId = Math.max(...p.layerState.layers.map((l) => l.id));
-          const copy = {
-            ...src,
-            id: maxId + 1,
-            name: `${src.name} copy`,
-            strokes: [...src.strokes],
-          };
-          const newLayers = [...p.layerState.layers];
-          newLayers.splice(idx + 1, 0, copy);
-          return {
-            ...p,
-            layerState: { layers: newLayers, activeLayerId: copy.id },
-          };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const handleReorderLayers = useCallback(
-    (newOrder: number[]) => {
-      setPages((prev) =>
-        prev.map((p) => {
-          if (p.id !== activePageId) return p;
-          const layerMap = new Map(p.layerState.layers.map((l) => [l.id, l]));
-          const reordered = newOrder
-            .map((id) => layerMap.get(id))
-            .filter((l): l is (typeof p.layerState.layers)[number] => !!l);
-          return { ...p, layerState: { ...p.layerState, layers: reordered } };
-        }),
-      );
-    },
-    [activePageId],
-  );
-
-  const addToColorHistory = useCallback((color: string) => {
-    setColorHistory((prev) => {
-      const filtered = prev.filter((c) => c !== color);
-      return [color, ...filtered].slice(0, 30);
-    });
-  }, []);
-
-  // Load colorHistory from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem("drawingAppColorHistory");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) setColorHistory(parsed.slice(0, 30));
-      } catch {}
-    }
-  }, []);
-
-  // Persist colorHistory to localStorage
-  useEffect(() => {
-    localStorage.setItem(
-      "drawingAppColorHistory",
-      JSON.stringify(colorHistory),
-    );
-  }, [colorHistory]);
-
-  // Track brushColor changes for history
-  useEffect(() => {
-    if (brushColor !== prevBrushColorRef.current) {
-      prevBrushColorRef.current = brushColor;
-      addToColorHistory(brushColor);
-    }
-  }, [brushColor, addToColorHistory]);
-
   const handleTextConfirm = useCallback(
     (opts: TextOptions) => {
-      if (!textPanel) return;
+      if (!textClickPos) return;
       canvasRef.current?.drawText?.(
-        textPanel.canvasX,
-        textPanel.canvasY,
+        textClickPos.canvasX,
+        textClickPos.canvasY,
         opts.text,
         opts.fontFamily,
         opts.fontSize,
-        opts.bold ? "700" : "400",
+        opts.bold ? "bold" : "normal",
         opts.italic ? "italic" : "normal",
         opts.color,
         opts.textAlign,
         opts.underline,
       );
-      setTextPanel(null);
+      setTextClickPos(null);
     },
-    [textPanel],
+    [textClickPos],
   );
 
-  const handleEyedropperMove = useCallback(
-    (color: string | null, x: number, y: number) => {
-      setEyedropperColor(color);
-      if (color) setEyedropperPos({ x, y });
-    },
-    [],
-  );
+  const handleCanvasWheel = useCallback((e: React.WheelEvent) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setZoom((prev) =>
+      Math.max(10, Math.min(500, prev - Math.sign(e.deltaY) * 10)),
+    );
+  }, []);
 
-  const handleColorPick = useCallback(
-    (color: string) => {
-      setBrushColor(color);
-      setEyedropperColor(null);
-      addToColorHistory(color);
-      setActiveTool("brush");
-    },
-    [addToColorHistory],
-  );
+  // ─── Page size from key ───────────────────────────────────────────────
+  const canvasPageSize = PAGE_SIZE_MAP[pageSizeKey] ?? PAGE_SIZE_MAP.Square;
+  const canvasBg = pageColor === "transparent" ? "transparent" : pageColor;
 
-  // Pan handlers
-  const handleWorkspaceMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (activeTool !== "pan") return;
-      e.preventDefault();
-      const workspace = workspaceRef.current;
-      if (!workspace) return;
-      setPanDragging(true);
-      panStartRef.current = {
-        mouseX: e.clientX,
-        mouseY: e.clientY,
-        scrollX: workspace.scrollLeft,
-        scrollY: workspace.scrollTop,
-      };
-    },
-    [activeTool],
-  );
-
-  const handleWorkspaceMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!panDragging || !panStartRef.current) return;
-      const workspace = workspaceRef.current;
-      if (!workspace) return;
-      workspace.scrollLeft =
-        panStartRef.current.scrollX - (e.clientX - panStartRef.current.mouseX);
-      workspace.scrollTop =
-        panStartRef.current.scrollY - (e.clientY - panStartRef.current.mouseY);
-    },
-    [panDragging],
-  );
-
-  const handleWorkspaceMouseUp = useCallback(() => {
-    if (activeTool === "pan") {
-      setPanDragging(false);
-      panStartRef.current = null;
-    }
-  }, [activeTool]);
-
-  const handleWorkspaceMouseLeave = useCallback(() => {
-    if (activeTool === "pan") {
-      setPanDragging(false);
-      panStartRef.current = null;
-    }
-  }, [activeTool]);
-
-  const handleWorkspaceWheel = useCallback(
-    (e: React.WheelEvent<HTMLDivElement>) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const workspace = workspaceRef.current;
-        if (!workspace) return;
-        const rect = workspace.getBoundingClientRect();
-        const mouseInWorkspaceX = e.clientX - rect.left + workspace.scrollLeft;
-        const mouseInWorkspaceY = e.clientY - rect.top + workspace.scrollTop;
-        const delta = e.deltaY > 0 ? -10 : 10;
-        const currentZoom = zoomRef.current;
-        const newZoom = Math.min(500, Math.max(10, currentZoom + delta));
-        const scale = newZoom / currentZoom;
-        setZoom(newZoom);
-        requestAnimationFrame(() => {
-          if (workspace) {
-            workspace.scrollLeft =
-              mouseInWorkspaceX * scale - (e.clientX - rect.left);
-            workspace.scrollTop =
-              mouseInWorkspaceY * scale - (e.clientY - rect.top);
-          }
-        });
-      }
-    },
-    [],
-  );
-
-  const appId = encodeURIComponent(
-    typeof window !== "undefined" ? window.location.hostname : "drawing-app",
-  );
-
-  const showEmptyHint =
-    !overlayDismissed &&
-    !startedPageIds.has(activePageId) &&
-    totalStrokeCount === 0;
-
-  // Effective brush size passed to canvas (eraser uses eraserSize)
+  // Effective brush size for eraser vs brush
   const effectiveBrushSize = activeTool === "eraser" ? eraserSize : brushSize;
 
+  // LayerFilterData compatible from LayerFilter
+  const layerFiltersForCanvas: Record<number, LayerFilterData> =
+    layerFilters as Record<number, LayerFilterData>;
+
+  const activeLayerLocked =
+    layers.find((l) => l.id === activeLayerId)?.locked ?? false;
+
+  // ─── Render ───────────────────────────────────────────────────────────
   return (
-    <div
-      className="flex flex-col"
-      style={{
-        height: "100dvh",
-        overflow: "hidden",
-        background: colorTheme === "light" ? "#e8e8ec" : "#0d0d0f",
-        transition: "background 0.4s ease",
-      }}
-    >
-      {showCreditModal && (
-        <CreditModal
-          onClose={handleModalClose}
-          onStartDrawing={handleModalStartDrawing}
-        />
+    <>
+      <PageTransitionLoader isLoading={isTransitioning} />
+
+      {currentView === "landing" && (
+        <div style={{ opacity: 1, transition: "opacity 0.4s ease" }}>
+          <LandingPage
+            onLaunchApp={() => navigateWithLoader("app")}
+            onShowLogin={() => navigateWithLoader("app")}
+            onShowGuide={() => navigateWithLoader("guide")}
+          />
+        </div>
       )}
 
-      <TopNavBar
-        projectName={projectName}
-        onProjectNameChange={setProjectName}
-        zoom={zoom}
-        onZoomChange={setZoom}
-        onUndo={handleUndo}
-        onRedo={() => canvasRef.current?.redo?.()}
-        canUndo={activeLayerStrokeCount > 0 || totalStrokeCount > 0}
-        onExport={handleSave}
-        onClear={handleClear}
-        uiTheme={uiTheme}
-        uiAccent={uiAccent}
-        brushColor={brushColor}
-        onBrushColorChange={setBrushColor}
-        colorTheme={colorTheme}
-        onColorThemeChange={(t) => {
-          setColorTheme(t);
-          document.documentElement.setAttribute("data-theme", t);
-          localStorage.setItem("drawingAppTheme", t);
-        }}
-        profileImage={profileImage}
-        onProfileImageChange={setProfileImage}
-        onSettingsOpen={() => setShowSettingsModal((v) => !v)}
-        onNewProject={handleNewProject}
-        onSave={handleSaveDrw}
-        onSaveAs={handleSaveAs}
-        onExportPNG={handleExportPNG}
-        onExportJPG={handleExportJPG}
-        onImportImage={handleImportImage}
-      />
+      {currentView === "guide" && (
+        <UserGuidePage onGoHome={() => navigateWithLoader("landing")} />
+      )}
 
-      {showBrushPanel && (
-        <FloatingBrushPanel
-          brushSize={brushSize}
-          onBrushSizeChange={setBrushSize}
-          opacity={opacity}
-          onOpacityChange={setOpacity}
-          hardness={brushHardness}
-          onHardnessChange={setBrushHardness}
-          brushColor={brushColor}
-          onBrushColorChange={setBrushColor}
-          brushShape={brushShape}
-          onBrushShapeChange={setBrushShape}
-          brushSmoothing={brushSmoothing}
-          onBrushSmoothingChange={setBrushSmoothing}
-          pressureSim={pressureSim}
-          onPressureSimChange={setPressureSim}
-          accentColor={uiAccent.accent}
-          onClose={() => setShowBrushPanel(false)}
-        />
-      )}
-      {showEraserPanel && activeTool === "eraser" && (
-        <FloatingEraserPanel
-          eraserSize={eraserSize}
-          onEraserSizeChange={setEraserSize}
-          eraserSoftness={eraserSoftness}
-          onEraserSoftnessChange={setEraserSoftness}
-          accentColor={uiAccent.accent}
-          onClose={() => setShowEraserPanel(false)}
-        />
-      )}
-      {showShapePanel && activeTool === "shape" && (
-        <FloatingShapePanel
-          selectedShape={shapeToolType}
-          onShapeSelect={(s) => setShapeToolType(s)}
-          accentColor={uiAccent.accent}
-          onClose={() => setShowShapePanel(false)}
-        />
-      )}
-      {textPanel && activeTool === "text" && (
-        <FloatingTextPanel
-          initialX={textPanel.screenX}
-          initialY={textPanel.screenY}
-          canvasX={textPanel.canvasX}
-          canvasY={textPanel.canvasY}
-          color={brushColor}
-          accentColor={uiAccent.accent}
-          onConfirm={handleTextConfirm}
-          onCancel={() => setTextPanel(null)}
-        />
-      )}
-      {showSettingsModal && (
-        <FloatingSettingsModal
-          pageColor={pageColor}
-          onPageColorChange={setPageColor}
-          canvasTheme={canvasTheme}
-          onCanvasThemeChange={handleThemeChange}
-          pageSizeKey={pageSizeKey}
-          onPageSizeChange={setPageSizeKey}
-          onClose={() => setShowSettingsModal(false)}
-          accentColor={uiAccent.accent}
-          accentBg={uiAccent.accentBg}
-          accentBorder={uiAccent.accentBorder}
-          onExport={handleSave}
-        />
-      )}
-      <div
-        style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}
-      >
-        <LeftToolbar
-          activeTool={activeTool}
-          onToolChange={(tool) => {
-            setActiveTool(tool);
-            if (tool === "brush") setShowBrushPanel(true);
-            if (tool === "eraser") setShowEraserPanel(true);
-            if (tool === "shape") setShowShapePanel(true);
+      {currentView === "app" && (
+        <div
+          className="flex flex-col"
+          style={{
+            height: "100dvh",
+            overflow: "hidden",
+            background:
+              colorTheme === "light"
+                ? "#e8e8ec"
+                : colorTheme === "purple"
+                  ? "#0d0a1a"
+                  : "#0d0d0f",
+            transition: "background 0.4s ease",
           }}
-          brushColor={brushColor}
-          uiTheme={uiTheme}
-          uiAccent={uiAccent}
-          colorHistory={colorHistory}
-          onColorSelect={(c) => {
-            setBrushColor(c);
-            addToColorHistory(c);
-          }}
-        />
-
-        {/* Canvas workspace */}
-        <main
-          className="flex-1 flex flex-col overflow-hidden"
-          style={{ position: "relative", minWidth: 0 }}
         >
-          {/* Dot-grid canvas area */}
-          <div
-            ref={workspaceRef}
-            className="flex-1 canvas-workspace overflow-auto"
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "center",
-              padding: 40,
-              cursor:
-                activeTool === "pan"
-                  ? panDragging
-                    ? "grabbing"
-                    : "grab"
-                  : "default",
+          <TopNavBar
+            projectName="Untitled Project"
+            onProjectNameChange={() => {}}
+            zoom={zoom}
+            onZoomChange={setZoom}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={undoStack.length > 0}
+            canRedo={redoStack.length > 0}
+            onExport={handleExport}
+            onClear={handleClearCanvas}
+            uiTheme={uiTheme}
+            uiAccent={uiAccent}
+            brushColor={brushColor}
+            onBrushColorChange={setBrushColor}
+            colorTheme={colorTheme}
+            onColorThemeChange={handleColorThemeChange}
+            profileImage={profileImage}
+            onProfileImageChange={setProfileImage}
+            onSettingsOpen={() => setShowSettingsModal((v) => !v)}
+            onImportImage={handleImportImage}
+            onNewProject={handleNewProject}
+            onSave={handleSaveDrw}
+            onSaveAs={handleSaveAs}
+            onExportPNG={handleExportPNG}
+            onExportJPG={handleExportJPG}
+            onCanvasSettingsOpen={() => setShowSettingsModal((v) => !v)}
+            onGoHome={() => {
+              if (onGoHome) {
+                onGoHome();
+              } else {
+                navigateWithLoader("landing");
+              }
             }}
-            onMouseDown={handleWorkspaceMouseDown}
-            onMouseMove={handleWorkspaceMouseMove}
-            onMouseUp={handleWorkspaceMouseUp}
-            onMouseLeave={handleWorkspaceMouseLeave}
-            onWheel={handleWorkspaceWheel}
+          />
+
+          {showBrushPanel && (
+            <FloatingBrushPanel
+              brushSize={brushSize}
+              onBrushSizeChange={setBrushSize}
+              opacity={brushOpacity}
+              onOpacityChange={setBrushOpacity}
+              hardness={brushHardness}
+              onHardnessChange={setBrushHardness}
+              brushColor={brushColor}
+              onBrushColorChange={setBrushColor}
+              brushShape={brushShape}
+              onBrushShapeChange={setBrushShape}
+              brushSmoothing={brushSmoothing}
+              onBrushSmoothingChange={setBrushSmoothing}
+              pressureSim={pressureSim}
+              onPressureSimChange={setPressureSim}
+              accentColor={uiAccent.accent}
+              onClose={() => setShowBrushPanel(false)}
+            />
+          )}
+
+          {showEraserPanel && (
+            <FloatingEraserPanel
+              eraserSize={eraserSize}
+              onEraserSizeChange={setEraserSize}
+              eraserSoftness={eraserSoftness}
+              onEraserSoftnessChange={setEraserSoftness}
+              accentColor={uiAccent.accent}
+              onClose={() => setShowEraserPanel(false)}
+            />
+          )}
+
+          {showShapePanel && (
+            <FloatingShapePanel
+              selectedShape={shapeType}
+              onShapeSelect={setShapeType}
+              accentColor={uiAccent.accent}
+              onClose={() => setShowShapePanel(false)}
+            />
+          )}
+
+          {textClickPos && (
+            <FloatingTextPanel
+              initialX={textClickPos.screenX}
+              initialY={textClickPos.screenY}
+              canvasX={textClickPos.canvasX}
+              canvasY={textClickPos.canvasY}
+              color={brushColor}
+              accentColor={uiAccent.accent}
+              onConfirm={handleTextConfirm}
+              onCancel={() => setTextClickPos(null)}
+            />
+          )}
+
+          {showSettingsModal && (
+            <FloatingSettingsModal
+              pageColor={pageColor}
+              onPageColorChange={setPageColor}
+              canvasTheme={canvasTheme}
+              onCanvasThemeChange={setCanvasTheme}
+              pageSizeKey={pageSizeKey}
+              onPageSizeChange={setPageSizeKey}
+              onClose={() => setShowSettingsModal(false)}
+              accentColor={uiAccent.accent}
+              accentBg={uiAccent.accentBg}
+              accentBorder={uiAccent.accentBorder}
+              onExport={handleExport}
+            />
+          )}
+
+          {showCreditModal && (
+            <CreditModal
+              onClose={() => setShowCreditModal(false)}
+              onStartDrawing={() => setShowCreditModal(false)}
+            />
+          )}
+
+          <div
+            className="flex flex-1"
+            style={{ overflow: "hidden", position: "relative" }}
           >
-            <div
-              style={{
-                position: "relative",
-                width: pageSize.width * (zoom / 100),
-                height: pageSize.height * (zoom / 100),
-                flexShrink: 0,
+            <LeftToolbar
+              activeTool={activeTool}
+              onToolChange={handleToolChange}
+              brushColor={brushColor}
+              uiTheme={uiTheme}
+              uiAccent={uiAccent}
+              colorHistory={colorHistory}
+              onColorSelect={(c) => {
+                setBrushColor(c);
+                addColorToHistory(c);
               }}
+              colorTheme={colorTheme}
+            />
+
+            <div
+              className="flex flex-col flex-1"
+              style={{ overflow: "hidden", position: "relative" }}
             >
               <div
                 style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: pageSize.width,
-                  height: pageSize.height,
-                  transform: `scale(${zoom / 100})`,
-                  transformOrigin: "top left",
+                  flex: 1,
+                  overflow: "hidden",
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background:
+                    colorTheme === "light"
+                      ? "#d0d0d8"
+                      : colorTheme === "purple"
+                        ? "#100824"
+                        : "#141418",
+                  cursor:
+                    activeTool === "pan"
+                      ? isPanningRef.current
+                        ? "grabbing"
+                        : "grab"
+                      : undefined,
+                }}
+                onWheel={handleCanvasWheel}
+                onMouseDown={(e) => {
+                  if (activeTool === "pan") {
+                    isPanningRef.current = true;
+                    panStartRef.current = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      ox: panOffset.x,
+                      oy: panOffset.y,
+                    };
+                    e.preventDefault();
+                  }
+                }}
+                onMouseMove={(e) => {
+                  if (activeTool === "pan" && isPanningRef.current) {
+                    setPanOffset({
+                      x:
+                        panStartRef.current.ox +
+                        (e.clientX - panStartRef.current.x),
+                      y:
+                        panStartRef.current.oy +
+                        (e.clientY - panStartRef.current.y),
+                    });
+                  }
+                }}
+                onMouseUp={() => {
+                  isPanningRef.current = false;
+                }}
+                onMouseLeave={() => {
+                  isPanningRef.current = false;
                 }}
               >
-                <DrawingCanvas
-                  ref={canvasRef}
-                  brushColor={brushColor}
-                  brushSize={effectiveBrushSize}
-                  brushShape={brushShape}
-                  activeTool={activeTool}
-                  brushOpacity={opacity}
-                  layers={canvasLayers}
-                  activeLayerId={activeLayerId}
-                  onLayersChange={handleLayersChange}
-                  canvasBg={canvasBg}
-                  pageSize={pageSize}
-                  layerFilters={layerFilters}
-                  onLayerThumbnailUpdate={setLayerThumbnails}
-                  onColorPick={handleColorPick}
-                  onEyedropperMove={handleEyedropperMove}
-                  fillTolerance={fillTolerance}
-                  selectionRect={
-                    activeTool === "select" ? activeSelectionRect : null
-                  }
-                  eraserSoftness={eraserSoftness}
-                  brushHardness={brushHardness}
-                  onTextClick={(cx, cy, sx, sy) =>
-                    setTextPanel({
-                      canvasX: cx,
-                      canvasY: cy,
-                      screenX: sx,
-                      screenY: sy,
-                    })
-                  }
-                  zoom={zoom}
-                  activeLayerLocked={activeLayerLocked}
-                  shapeToolType={activeTool === "shape" ? shapeToolType : null}
-                />
-                <SelectionOverlay
-                  active={activeTool === "select"}
-                  canvasRef={canvasRef}
-                  pageWidth={pageSize.width}
-                  pageHeight={pageSize.height}
-                  onSelectionChange={setActiveSelectionRect}
-                  zoom={zoom}
-                />
-                {showEmptyHint && (
-                  <div
-                    className="absolute inset-0 flex flex-col items-center justify-center"
-                    style={{ animation: "fade-in 0.6s ease-out" }}
-                  >
-                    <button
-                      type="button"
-                      className="flex flex-col items-center gap-3 px-6 py-5 rounded-2xl cursor-pointer"
+                <div
+                  style={{
+                    position: "relative",
+                    transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom / 100})`,
+                    transformOrigin: "center center",
+                    ...(canvasBg === "transparent"
+                      ? {
+                          backgroundImage:
+                            "repeating-conic-gradient(#888 0% 25%, #ccc 0% 50%)",
+                          backgroundSize: "16px 16px",
+                        }
+                      : {}),
+                  }}
+                >
+                  <DrawingCanvas
+                    key={`page-${activePageId}`}
+                    ref={canvasRef}
+                    layers={layers}
+                    activeLayerId={activeLayerId}
+                    activeTool={activeTool}
+                    brushColor={brushColor}
+                    brushSize={effectiveBrushSize}
+                    brushOpacity={brushOpacity}
+                    brushHardness={brushHardness}
+                    brushShape={brushShape}
+                    fillTolerance={fillTolerance}
+                    pageSize={{
+                      width: canvasPageSize.width,
+                      height: canvasPageSize.height,
+                    }}
+                    canvasBg={canvasBg}
+                    zoom={zoom}
+                    onLayersChange={handleLayersChange}
+                    onStrokeEnd={handleStrokeEnd}
+                    onColorPick={(color) => {
+                      setBrushColor(color);
+                      addColorToHistory(color);
+                    }}
+                    layerFilters={layerFiltersForCanvas}
+                    onLayerThumbnailUpdate={setLayerThumbnails}
+                    eraserSoftness={eraserSoftness}
+                    selectionRect={selectionRect}
+                    activeLayerLocked={activeLayerLocked}
+                    shapeToolType={activeTool === "shape" ? shapeType : null}
+                    onTextClick={handleTextClick}
+                    onEyedropperMove={(color, x, y) =>
+                      setEyedropperPreview(color ? { color, x, y } : null)
+                    }
+                  />
+                  {eyedropperPreview && activeTool === "colorpicker" && (
+                    <div
                       style={{
-                        background: "oklch(0.15 0.006 240 / 0.92)",
-                        border: "1px solid oklch(0.25 0.005 240)",
-                        backdropFilter: "blur(16px)",
-                        boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+                        position: "fixed",
+                        left: eyedropperPreview.x,
+                        top: eyedropperPreview.y,
+                        transform: "translate(-50%, -130%)",
+                        zIndex: 9999,
+                        pointerEvents: "none",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
                       }}
-                      onClick={handleStartDrawingClick}
-                      data-ocid="drawing.start_drawing.button"
                     >
                       <div
-                        className="w-12 h-12 rounded-xl flex items-center justify-center"
                         style={{
-                          background: uiAccent.accentBg,
-                          border: `1px solid ${uiAccent.accentBorder}`,
+                          width: 28,
+                          height: 28,
+                          borderRadius: "50%",
+                          background: eyedropperPreview.color,
+                          border: "2px solid white",
+                          boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+                        }}
+                      />
+                      <span
+                        style={{
+                          background: "rgba(0,0,0,0.85)",
+                          color: "#fff",
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          fontSize: 11,
+                          fontFamily: "monospace",
+                          letterSpacing: "0.04em",
                         }}
                       >
-                        <svg
-                          width="24"
-                          height="24"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke={uiAccent.accent}
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          role="img"
-                          aria-label="Drawing pencil icon"
-                        >
-                          <title>Drawing pencil icon</title>
-                          <path d="M12 19l7-7 3 3-7 7-3-3z" />
-                          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-                          <path d="M2 2l7.586 7.586" />
-                          <circle cx="11" cy="11" r="2" />
-                        </svg>
-                      </div>
-                      <div className="text-center">
-                        <p
-                          className="text-sm font-semibold"
-                          style={{ color: "oklch(0.92 0.005 240)" }}
-                        >
-                          Start Drawing
-                        </p>
-                        <p
-                          className="text-xs mt-1"
-                          style={{ color: "oklch(0.5 0.005 240)" }}
-                        >
-                          Click and drag to draw &middot;{" "}
-                          <kbd
-                            className="px-1 py-0.5 rounded text-xs"
-                            style={{
-                              background: "oklch(0.2 0.005 240)",
-                              color: "oklch(0.7 0.005 240)",
-                            }}
-                          >
-                            B
-                          </kbd>{" "}
-                          brush &middot;{" "}
-                          <kbd
-                            className="px-1 py-0.5 rounded text-xs"
-                            style={{
-                              background: "oklch(0.2 0.005 240)",
-                              color: "oklch(0.7 0.005 240)",
-                            }}
-                          >
-                            E
-                          </kbd>{" "}
-                          eraser
-                        </p>
-                      </div>
-                    </button>
-                  </div>
-                )}
+                        {eyedropperPreview.color}
+                      </span>
+                    </div>
+                  )}
+                  <SelectionOverlay
+                    active={activeTool === "select"}
+                    canvasRef={canvasRef}
+                    pageWidth={canvasPageSize.width}
+                    pageHeight={canvasPageSize.height}
+                    onSelectionChange={setSelectionRect}
+                    zoom={zoom}
+                  />
+                </div>
               </div>
+
+              <PageBar
+                pages={pages}
+                activePageId={activePageId}
+                onSelectPage={handleSelectPage}
+                onAddPage={handleAddPage}
+                onDeletePage={handleDeletePage}
+                onRenamePage={handleRenamePage}
+                onDuplicatePage={handleDuplicatePage}
+                uiAccent={uiAccent}
+              />
             </div>
+
+            <RightPanel
+              layers={layers}
+              activeLayerId={activeLayerId}
+              onSetActive={setActiveLayerId}
+              onAddLayer={handleAddLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onToggleVisible={handleToggleVisible}
+              onRenameLayer={handleRenameLayer}
+              onOpacityChange={handleLayerOpacityChange}
+              onMoveLayer={handleMoveLayer}
+              onDuplicateLayer={handleDuplicateLayer}
+              onReorderLayers={handleReorderLayers}
+              onLockLayer={handleLockLayer}
+              brushColor={brushColor}
+              onBrushColorChange={setBrushColor}
+              brushSize={brushSize}
+              onBrushSizeChange={setBrushSize}
+              brushShape={brushShape}
+              onBrushShapeChange={setBrushShape}
+              opacity={brushOpacity}
+              onOpacityPropChange={setBrushOpacity}
+              canvasTheme={canvasTheme}
+              onThemeChange={setCanvasTheme}
+              uiTheme={uiTheme}
+              onUiThemeToggle={handleUiThemeToggle}
+              pageSizeKey={pageSizeKey}
+              onPageSizeChange={setPageSizeKey}
+              onClear={handleClearCanvas}
+              uiAccent={uiAccent}
+              layerFilters={layerFilters}
+              onLayerFilterChange={handleLayerFilterChange}
+              layerThumbnails={layerThumbnails}
+            />
           </div>
 
-          {/* Page bar at bottom */}
-          <PageBar
-            pages={pages}
-            activePageId={activePageId}
-            onSelectPage={(id) => {
-              // Save thumbnail of current page before switching
-              const thumb = canvasRef.current?.getCompositeThumbnail?.();
-              if (thumb) {
-                setPages((prev) =>
-                  prev.map((p) =>
-                    p.id === activePageId ? { ...p, thumbnail: thumb } : p,
-                  ),
-                );
-              }
-              setActivePageId(id);
-              if (!startedPageIds.has(id)) setOverlayDismissed(false);
-            }}
-            onAddPage={handleAddPage}
-            onDeletePage={handleDeletePage}
-            onRenamePage={handleRenamePage}
-            onDuplicatePage={handleDuplicatePage}
-            uiAccent={uiAccent}
-          />
-        </main>
-
-        <RightPanel
-          layers={layerPanelLayers}
-          activeLayerId={activeLayerId}
-          onSetActive={setActiveLayerId}
-          onAddLayer={handleAddLayer}
-          onDeleteLayer={handleDeleteLayer}
-          onToggleVisible={handleToggleLayerVisible}
-          onRenameLayer={handleRenameLayer}
-          onOpacityChange={handleLayerOpacity}
-          onMoveLayer={handleMoveLayer}
-          onDuplicateLayer={handleDuplicateLayer}
-          onReorderLayers={handleReorderLayers}
-          onLockLayer={handleLockLayer}
-          brushColor={brushColor}
-          onBrushColorChange={setBrushColor}
-          brushSize={brushSize}
-          onBrushSizeChange={setBrushSize}
-          brushShape={brushShape}
-          onBrushShapeChange={setBrushShape}
-          opacity={opacity}
-          onOpacityPropChange={setOpacity}
-          canvasTheme={canvasTheme}
-          onThemeChange={handleThemeChange}
-          uiTheme={uiTheme}
-          onUiThemeToggle={handleUiThemeToggle}
-          pageSizeKey={pageSizeKey}
-          onPageSizeChange={setPageSizeKey}
-          onClear={handleClear}
-          uiAccent={uiAccent}
-          layerFilters={layerFilters}
-          onLayerFilterChange={handleLayerFilterChange}
-          layerThumbnails={layerThumbnails}
-        />
-      </div>
-
-      {/* Fill tool tolerance panel */}
-      {activeTool === "fill" && (
-        <div
-          style={{
-            position: "fixed",
-            top: 60,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(18,18,28,0.97)",
-            backdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.13)",
-            borderRadius: 12,
-            padding: "8px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            zIndex: 9000,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
-            pointerEvents: "all",
-          }}
-        >
-          <span
+          {/* Footer */}
+          <div
             style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "rgba(160,160,180,0.8)",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            Fill Tolerance
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={128}
-            value={fillTolerance}
-            onChange={(e) => setFillTolerance(Number(e.target.value))}
-            data-ocid="fill.tolerance.slider"
-            style={{
-              width: 120,
-              accentColor: uiAccent.accent,
-              cursor: "pointer",
-            }}
-          />
-          <span
-            style={{
-              fontSize: 11,
-              color: "rgba(200,200,220,0.9)",
-              minWidth: 24,
               textAlign: "center",
+              padding: "4px 0",
+              fontSize: 11,
+              color: "rgba(255,255,255,0.25)",
+              background:
+                colorTheme === "light"
+                  ? "#e0e0e8"
+                  : colorTheme === "purple"
+                    ? "#0a0617"
+                    : "#0a0a0d",
             }}
           >
-            {fillTolerance}
-          </span>
-          <div
-            style={{
-              width: 1,
-              height: 18,
-              background: "rgba(255,255,255,0.12)",
-            }}
-          />
-          <div
-            title="Fill color"
-            style={{
-              width: 18,
-              height: 18,
-              borderRadius: 4,
-              background: brushColor,
-              border: "2px solid rgba(255,255,255,0.25)",
-              flexShrink: 0,
-            }}
-          />
-        </div>
-      )}
-
-      {/* Eyedropper color preview overlay */}
-      {eyedropperColor && activeTool === "colorpicker" && (
-        <div
-          style={{
-            position: "fixed",
-            left: eyedropperPos.x + 16,
-            top: eyedropperPos.y - 50,
-            pointerEvents: "none",
-            zIndex: 9999,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 4,
-          }}
-        >
-          <div
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: "50%",
-              background: eyedropperColor,
-              border: "3px solid white",
-              boxShadow: "0 2px 12px rgba(0,0,0,0.6)",
-            }}
-          />
-          <div
-            style={{
-              background: "rgba(10,10,20,0.92)",
-              color: "white",
-              fontSize: 10,
-              padding: "2px 7px",
-              borderRadius: 4,
-              fontFamily: "monospace",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
-              letterSpacing: "0.05em",
-            }}
-          >
-            {eyedropperColor.toUpperCase()}
+            © {new Date().getFullYear()}.{" "}
+            <a
+              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "inherit", textDecoration: "none" }}
+            >
+              Built with{" "}
+              <Heart
+                size={10}
+                style={{ display: "inline", verticalAlign: "middle" }}
+              />{" "}
+              using caffeine.ai
+            </a>
           </div>
         </div>
       )}
-
-      {/* Footer */}
-      <footer
-        className="flex items-center justify-center gap-1.5 py-1.5 text-xs"
-        style={{
-          background: uiAccent.headerBg,
-          borderTop: `1px solid ${uiAccent.headerBorder}`,
-          color: "oklch(0.4 0.005 240)",
-          flexShrink: 0,
-        }}
-      >
-        <span>Built with</span>
-        <Heart size={10} fill={uiAccent.accent} stroke={uiAccent.accent} />
-        <span>using</span>
-        <a
-          href={`https://caffeine.ai/?utm_source=Caffeine-footer&utm_medium=referral&utm_content=${appId}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="transition-colors"
-          style={{ color: uiAccent.accent }}
-        >
-          caffeine.ai
-        </a>
-        <span>&middot; &copy; {new Date().getFullYear()}</span>
-      </footer>
-    </div>
+    </>
   );
 }

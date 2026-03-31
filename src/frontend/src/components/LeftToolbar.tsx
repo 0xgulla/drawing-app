@@ -110,6 +110,7 @@ interface LeftToolbarProps {
   uiAccent: UIAccent;
   colorHistory?: string[];
   onColorSelect?: (color: string) => void;
+  colorTheme?: string;
 }
 
 export default function LeftToolbar({
@@ -119,6 +120,7 @@ export default function LeftToolbar({
   uiTheme,
   colorHistory,
   onColorSelect,
+  colorTheme,
 }: LeftToolbarProps) {
   const accentColor =
     uiTheme === "purple" ? "oklch(0.72 0.22 290)" : "oklch(0.72 0.15 200)";
@@ -134,9 +136,21 @@ export default function LeftToolbar({
     uiTheme === "purple"
       ? "0 0 12px oklch(0.65 0.22 290 / 0.4)"
       : "0 0 12px oklch(0.72 0.15 200 / 0.4)";
-  const panelBg = uiTheme === "purple" ? "#0e0a1a" : "oklch(0.11 0.006 240)";
-  const panelBorder =
-    uiTheme === "purple" ? "oklch(0.22 0.06 290)" : "oklch(0.2 0.005 240)";
+  const isLight = colorTheme === "light";
+  const panelBg = isLight
+    ? "#f0f2f5"
+    : uiTheme === "purple"
+      ? "#0e0a1a"
+      : "oklch(0.11 0.006 240)";
+  const panelBorder = isLight
+    ? "#cdd0d8"
+    : uiTheme === "purple"
+      ? "oklch(0.22 0.06 290)"
+      : "oklch(0.2 0.005 240)";
+  const inactiveIconColor = isLight
+    ? "oklch(0.35 0.01 240)"
+    : "oklch(0.65 0.01 240)";
+  const labelColor = isLight ? "oklch(0.45 0.01 240)" : "oklch(0.35 0.005 240)";
 
   const renderTool = (tool: ToolDef) => {
     const isActive = activeTool === tool.id;
@@ -158,7 +172,7 @@ export default function LeftToolbar({
             ? `1px solid ${accentBorder}`
             : "1px solid transparent",
           background: isActive ? accentBg : "transparent",
-          color: isActive ? accentColor : "oklch(0.6 0.005 240)",
+          color: isActive ? accentColor : inactiveIconColor,
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
@@ -187,7 +201,10 @@ export default function LeftToolbar({
         borderRight: `1px solid ${panelBorder}`,
         flexShrink: 0,
         zIndex: 40,
-        boxShadow: "2px 0 16px rgba(0,0,0,0.3)",
+        boxShadow: isLight
+          ? "2px 0 8px rgba(0,0,0,0.1)"
+          : "2px 0 16px rgba(0,0,0,0.3)",
+        transition: "background 0.35s ease, border-color 0.35s ease",
         overflowY: "auto",
         overflowX: "hidden",
       }}
@@ -197,7 +214,7 @@ export default function LeftToolbar({
         style={{
           fontSize: 9,
           fontWeight: 700,
-          color: "oklch(0.35 0.005 240)",
+          color: labelColor,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           textAlign: "center",

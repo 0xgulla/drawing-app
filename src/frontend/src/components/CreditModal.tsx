@@ -1,6 +1,8 @@
 import { Pen, X } from "lucide-react";
 import React from "react";
-import gullaLogo from "/assets/uploads/download-1.webp";
+
+const sketchoraLogo =
+  "/assets/generated/sketchora-logo-transparent.dim_200x200.png";
 
 interface CreditModalProps {
   onClose: () => void;
@@ -14,7 +16,7 @@ export default function CreditModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }}
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
       onClick={onClose}
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
@@ -25,11 +27,12 @@ export default function CreditModal({
         className="relative flex flex-col items-center gap-5 px-10 py-8 rounded-2xl"
         style={{
           background:
-            "linear-gradient(135deg, oklch(0.18 0.02 260), oklch(0.14 0.02 260))",
-          border: "1px solid oklch(0.75 0.18 65 / 0.35)",
+            "linear-gradient(135deg, #1a0f2e 0%, #120e1e 60%, #0f1520 100%)",
+          border: "1px solid rgba(124,58,237,0.35)",
           boxShadow:
-            "0 8px 48px rgba(0,0,0,0.55), 0 0 0 1px oklch(0.75 0.18 65 / 0.1)",
-          minWidth: "280px",
+            "0 8px 48px rgba(0,0,0,0.65), 0 0 60px rgba(124,58,237,0.15), 0 0 0 1px rgba(124,58,237,0.1)",
+          minWidth: "300px",
+          maxWidth: "380px",
           animation: "credit-pop 0.28s cubic-bezier(0.34,1.56,0.64,1) both",
         }}
         onClick={(e) => e.stopPropagation()}
@@ -41,21 +44,20 @@ export default function CreditModal({
           onClick={onClose}
           className="absolute top-3 right-3 flex items-center justify-center w-7 h-7 rounded-full transition-colors"
           style={{
-            background: "oklch(0.28 0.02 260)",
-            color: "oklch(0.65 0.04 260)",
-            border: "1px solid oklch(0.32 0.02 260)",
+            background: "rgba(255,255,255,0.06)",
+            color: "rgba(255,255,255,0.4)",
+            border: "1px solid rgba(255,255,255,0.1)",
           }}
           onMouseEnter={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background =
-              "oklch(0.34 0.02 260)";
-            (e.currentTarget as HTMLButtonElement).style.color =
-              "oklch(0.85 0.04 260)";
+              "rgba(255,255,255,0.12)";
+            (e.currentTarget as HTMLButtonElement).style.color = "white";
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background =
-              "oklch(0.28 0.02 260)";
+              "rgba(255,255,255,0.06)";
             (e.currentTarget as HTMLButtonElement).style.color =
-              "oklch(0.65 0.04 260)";
+              "rgba(255,255,255,0.4)";
           }}
           aria-label="Close"
         >
@@ -64,62 +66,124 @@ export default function CreditModal({
 
         {/* Logo */}
         <div
-          className="flex items-center justify-center w-20 h-20 rounded-2xl overflow-hidden"
+          className="flex items-center justify-center"
           style={{
-            border: "2px solid oklch(0.75 0.18 65 / 0.5)",
-            boxShadow: "0 0 18px oklch(0.75 0.18 65 / 0.25)",
+            width: 88,
+            height: 88,
+            borderRadius: "50%",
+            overflow: "hidden",
+            boxShadow:
+              "0 0 30px rgba(124,58,237,0.4), 0 0 60px rgba(16,185,129,0.15)",
+            border: "2px solid rgba(124,58,237,0.4)",
           }}
         >
           <img
-            src={gullaLogo}
-            alt="Gulla"
-            className="w-full h-full object-cover"
+            src={sketchoraLogo}
+            alt="Sketchora"
+            style={{ width: "100%", height: "100%", objectFit: "cover" }}
           />
         </div>
 
         {/* Text */}
         <div className="flex flex-col items-center gap-1 text-center">
           <p
-            className="text-xs font-medium uppercase tracking-widest"
-            style={{ color: "oklch(0.75 0.18 65)" }}
+            className="text-xs font-semibold uppercase tracking-widest"
+            style={{ color: "#10b981", letterSpacing: "0.12em" }}
           >
-            Created by
+            Welcome to
           </p>
           <h2
-            className="text-2xl font-bold tracking-tight"
-            style={{ color: "oklch(0.96 0.02 260)" }}
+            className="text-3xl font-bold tracking-tight"
+            style={{
+              background:
+                "linear-gradient(135deg,#f0eaff 0%,#c4b5fd 40%,#6ee7b7 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              backgroundClip: "text",
+              lineHeight: 1.1,
+            }}
           >
-            Gulla
+            Sketchora
           </h2>
+          <p
+            className="text-sm mt-1"
+            style={{ color: "rgba(240,234,255,0.55)", maxWidth: 220 }}
+          >
+            Start creating your ideas
+          </p>
         </div>
 
         {/* Divider */}
         <div
           className="w-full h-px"
-          style={{ background: "oklch(0.75 0.18 65 / 0.2)" }}
+          style={{
+            background:
+              "linear-gradient(90deg,transparent,rgba(124,58,237,0.35),rgba(16,185,129,0.25),transparent)",
+          }}
         />
 
-        {/* CTA — clicking "Drawing" closes the modal and starts drawing immediately */}
+        {/* Illustration */}
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          {["✏️", "🎨", "✨"].map((emoji) => (
+            <span
+              key={emoji}
+              style={{
+                fontSize: 24,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: "rgba(124,58,237,0.12)",
+                border: "1px solid rgba(124,58,237,0.2)",
+              }}
+            >
+              {emoji}
+            </span>
+          ))}
+        </div>
+
+        {/* CTA */}
         <button
           type="button"
           onClick={onStartDrawing}
-          className="w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2"
+          data-ocid="credit.start_drawing.button"
+          className="w-full py-3 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2"
           style={{
-            background: "oklch(0.75 0.18 65)",
-            color: "oklch(0.12 0.02 260)",
+            background: "linear-gradient(135deg,#7c3aed,#10b981)",
+            color: "white",
+            boxShadow: "0 4px 20px rgba(124,58,237,0.4)",
+            letterSpacing: "0.02em",
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              "oklch(0.82 0.18 65)";
+            (e.currentTarget as HTMLButtonElement).style.opacity = "0.9";
+            (e.currentTarget as HTMLButtonElement).style.transform =
+              "translateY(-1px)";
+            (e.currentTarget as HTMLButtonElement).style.boxShadow =
+              "0 6px 28px rgba(124,58,237,0.5)";
           }}
           onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background =
-              "oklch(0.75 0.18 65)";
+            (e.currentTarget as HTMLButtonElement).style.opacity = "1";
+            (e.currentTarget as HTMLButtonElement).style.transform = "none";
+            (e.currentTarget as HTMLButtonElement).style.boxShadow =
+              "0 4px 20px rgba(124,58,237,0.4)";
           }}
         >
-          <Pen size={14} />
-          Drawing
+          <Pen size={15} />
+          Start Drawing
         </button>
+
+        <p
+          style={{
+            fontSize: 11,
+            color: "rgba(240,234,255,0.3)",
+            textAlign: "center",
+            marginTop: -8,
+          }}
+        >
+          Made by Gulla
+        </p>
       </div>
 
       <style>{`

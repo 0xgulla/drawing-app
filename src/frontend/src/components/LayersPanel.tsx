@@ -181,7 +181,13 @@ export default function LayersPanel({
 
         {/* Layer list - takes all available space */}
         <div
-          style={{ flex: 1, overflowY: "auto", padding: "4px 0", minHeight: 0 }}
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "4px 0",
+            minHeight: 0,
+            maxHeight: "calc(100vh - 160px)",
+          }}
         >
           {reversedLayers.map((layer, revIdx) => {
             const origIdx = layers.length - 1 - revIdx;
@@ -204,10 +210,13 @@ export default function LayersPanel({
                 style={{
                   margin: "2px 6px",
                   borderRadius: 8,
-                  background: isActive ? accentBg : "transparent",
+                  background: isActive ? `${accentBg}` : "transparent",
+                  borderLeft: isActive
+                    ? `3px solid ${accent}`
+                    : "3px solid transparent",
                   outline: isActive ? `1px solid ${accentBorder}` : "none",
                   overflow: "hidden",
-                  transition: "background 0.15s ease",
+                  transition: "all 0.15s ease",
                   cursor: "default",
                   opacity: isLocked ? 0.7 : 1,
                 }}
@@ -374,9 +383,9 @@ export default function LayersPanel({
                     <span
                       style={{
                         flex: 1,
-                        fontSize: 11,
-                        color: isActive ? accent : "#a1a1aa",
-                        fontWeight: isActive ? 600 : 400,
+                        fontSize: isActive ? 11 : 10,
+                        color: isActive ? "#ffffff" : "#a1a1aa",
+                        fontWeight: isActive ? 700 : 400,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",

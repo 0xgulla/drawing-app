@@ -90,14 +90,14 @@ export default function FloatingBrushPanel({
   const labelStyle = {
     fontSize: 10,
     fontWeight: 600,
-    color: "#6b6b70",
+    color: "var(--text-secondary, #6b6b70)",
     textTransform: "uppercase" as const,
     letterSpacing: "0.06em",
     minWidth: 60,
   };
   const valueStyle = {
     fontSize: 11,
-    color: "#a1a1aa",
+    color: "var(--text-secondary, #a1a1aa)",
     minWidth: 28,
     textAlign: "right" as const,
   };
@@ -111,7 +111,7 @@ export default function FloatingBrushPanel({
         left: pos.x,
         top: pos.y,
         width: 240,
-        background: "rgba(18,18,22,0.97)",
+        background: "var(--bg-secondary, rgba(18,18,22,0.97))",
         border: "1px solid rgba(255,255,255,0.09)",
         borderRadius: 12,
         boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)",
@@ -138,7 +138,7 @@ export default function FloatingBrushPanel({
           style={{
             fontSize: 12,
             fontWeight: 700,
-            color: "#e8e8ec",
+            color: "var(--text-primary, #e8e8ec)",
             letterSpacing: "-0.01em",
           }}
         >
@@ -154,7 +154,7 @@ export default function FloatingBrushPanel({
             borderRadius: 6,
             border: "none",
             background: "rgba(255,255,255,0.06)",
-            color: "#6b6b70",
+            color: "var(--text-secondary, #6b6b70)",
             cursor: "pointer",
             display: "flex",
             alignItems: "center",

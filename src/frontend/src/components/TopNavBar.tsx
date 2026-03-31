@@ -4,6 +4,7 @@ import {
   FileDown,
   FileImage,
   FilePlus,
+  FolderOpen,
   Menu,
   Minus,
   Moon,
@@ -11,7 +12,9 @@ import {
   Redo2,
   RotateCcw,
   Save,
+  Settings,
   Share2,
+  Sparkles,
   Sun,
   Trash2,
   Undo2,
@@ -21,6 +24,9 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import type { UIAccent, UITheme } from "../App";
+
+const SKETCHORA_LOGO =
+  "/assets/uploads/chatgpt_image_mar_27_2026_01_48_44_am-019d2c01-0e27-722f-ab9a-506ca29745d4-1.png";
 
 const ZOOM_LEVELS = [10, 25, 50, 75, 100, 125, 150, 200, 300, 500];
 
@@ -36,14 +42,15 @@ interface TopNavBarProps {
   onUndo: () => void;
   onRedo?: () => void;
   canUndo: boolean;
+  canRedo?: boolean;
   onExport: () => void;
   onClear?: () => void;
   uiTheme: UITheme;
   uiAccent: UIAccent;
   brushColor: string;
   onBrushColorChange: (c: string) => void;
-  colorTheme: "light" | "dark";
-  onColorThemeChange: (t: "light" | "dark") => void;
+  colorTheme: "light" | "dark" | "purple";
+  onColorThemeChange: (t: "light" | "dark" | "purple") => void;
   profileImage: string | null;
   onProfileImageChange: (url: string) => void;
   onSettingsOpen: () => void;
@@ -53,6 +60,8 @@ interface TopNavBarProps {
   onSaveAs?: () => void;
   onExportPNG?: () => void;
   onExportJPG?: () => void;
+  onCanvasSettingsOpen?: () => void;
+  onGoHome?: () => void;
 }
 
 function AutoFocusInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -71,6 +80,7 @@ export default function TopNavBar({
   onUndo,
   onRedo,
   canUndo,
+  canRedo = false,
   onExport,
   onClear,
   uiTheme,
@@ -86,6 +96,8 @@ export default function TopNavBar({
   onSaveAs,
   onExportPNG,
   onExportJPG,
+  onCanvasSettingsOpen,
+  onGoHome,
 }: TopNavBarProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(projectName);
@@ -93,6 +105,17 @@ export default function TopNavBar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [showComingSoon, setShowComingSoon] = useState(false);
+  const [showOpenProjectModal, setShowOpenProjectModal] = useState(false);
+  const [showHomeConfirm, setShowHomeConfirm] = useState(false);
+  const [pfpLocked, setPfpLocked] = useState(
+    () => localStorage.getItem("pfpLocked") === "true",
+  );
+  const [pfpDataUrl, setPfpDataUrl] = useState<string | null>(() =>
+    localStorage.getItem("pfpDataUrl"),
+  );
+  const [showPfpConfirm, setShowPfpConfirm] = useState(false);
+  const [pendingPfpFile, setPendingPfpFile] = useState<File | null>(null);
+  const [pfpError, setPfpError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -107,6 +130,10 @@ export default function TopNavBar({
   const panelBg = uiTheme === "purple" ? "#120e1e" : "oklch(0.12 0.006 240)";
   const panelBorder =
     uiTheme === "purple" ? "oklch(0.25 0.06 290)" : "oklch(0.22 0.005 240)";
+  const isLight = colorTheme === "light";
+  const navBg = isLight ? "rgba(240,242,245,0.98)" : panelBg;
+  const navBorder = isLight ? "#cdd0d8" : panelBorder;
+  const navText = isLight ? "#1a1a2e" : "white";
 
   // Close menu on outside click
   useEffect(() => {
@@ -150,12 +177,41 @@ export default function TopNavBar({
 
   const handleProfileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
+    if (pfpLocked) return;
+    // Validate type
+    const validTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!validTypes.includes(file.type)) {
+      setPfpError("Only JPG, PNG, or WebP images are accepted.");
+      return;
+    }
+    // Validate size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setPfpError("Image must be under 5MB.");
+      return;
+    }
+    setPfpError(null);
+    setPendingPfpFile(file);
+    setShowPfpConfirm(true);
+  };
+
+  const confirmPfpUpload = () => {
+    if (!pendingPfpFile) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      if (ev.target?.result) onProfileImageChange(ev.target.result as string);
+      const url = ev.target?.result as string;
+      if (url) {
+        localStorage.setItem("pfpDataUrl", url);
+        localStorage.setItem("pfpLocked", "true");
+        setPfpDataUrl(url);
+        setPfpLocked(true);
+        onProfileImageChange(url);
+      }
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(pendingPfpFile);
+    setShowPfpConfirm(false);
+    setPendingPfpFile(null);
   };
 
   const handleImportChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -255,8 +311,8 @@ export default function TopNavBar({
           padding: "0 12px",
           flexShrink: 0,
           zIndex: 50,
-          background: panelBg,
-          borderBottom: `1px solid ${panelBorder}`,
+          background: navBg,
+          borderBottom: `1px solid ${navBorder}`,
           boxShadow:
             "0 1px 0 rgba(255,255,255,0.04), 0 4px 20px rgba(0,0,0,0.5)",
           transition: "background 0.3s ease",
@@ -272,6 +328,249 @@ export default function TopNavBar({
             minWidth: 0,
           }}
         >
+          {/* Sketchora logo — click to go home */}
+          {onGoHome && (
+            <>
+              {/* Home confirmation dialog */}
+              {showHomeConfirm && (
+                <div
+                  data-ocid="home.dialog"
+                  style={{
+                    position: "fixed",
+                    inset: 0,
+                    zIndex: 9999,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "rgba(0,0,0,0.55)",
+                    backdropFilter: "blur(4px)",
+                  }}
+                  onClick={() => setShowHomeConfirm(false)}
+                  onKeyDown={(e) =>
+                    e.key === "Escape" && setShowHomeConfirm(false)
+                  }
+                  tabIndex={-1}
+                >
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    style={{
+                      background: "rgba(15,12,28,0.95)",
+                      border: "1px solid rgba(168,85,247,0.3)",
+                      borderRadius: 18,
+                      padding: "28px 32px",
+                      maxWidth: 360,
+                      width: "90vw",
+                      boxShadow:
+                        "0 8px 40px rgba(0,0,0,0.6), 0 0 40px rgba(168,85,247,0.1)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 20,
+                      backdropFilter: "blur(20px)",
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 12 }}
+                    >
+                      <div
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: "50%",
+                          background: "rgba(56,189,248,0.12)",
+                          border: "1px solid rgba(56,189,248,0.3)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="#38bdf8"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                          <polyline points="9 22 9 12 15 12 15 22" />
+                        </svg>
+                      </div>
+                      <div>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 16,
+                            color: "#fff",
+                            marginBottom: 4,
+                          }}
+                        >
+                          Go to Home?
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "rgba(255,255,255,0.55)",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          Unsaved work may be lost.
+                        </div>
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        justifyContent: "flex-end",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        data-ocid="home.dialog.cancel_button"
+                        onClick={() => setShowHomeConfirm(false)}
+                        style={{
+                          padding: "8px 18px",
+                          borderRadius: 999,
+                          border: "1px solid rgba(255,255,255,0.15)",
+                          background: "rgba(255,255,255,0.06)",
+                          color: "rgba(255,255,255,0.75)",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        data-ocid="home.dialog.confirm_button"
+                        onClick={() => {
+                          setShowHomeConfirm(false);
+                          onGoHome();
+                        }}
+                        style={{
+                          padding: "8px 18px",
+                          borderRadius: 999,
+                          border: "none",
+                          background:
+                            "linear-gradient(135deg, #38bdf8, #a855f7)",
+                          color: "#fff",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          transition: "all 0.15s",
+                          boxShadow: "0 2px 12px rgba(56,189,248,0.3)",
+                        }}
+                      >
+                        Go Home
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* Clickable logo + name to trigger home dialog */}
+              <button
+                type="button"
+                onClick={() => setShowHomeConfirm(true)}
+                title="Go to Home"
+                data-ocid="topnav.sketchora.button"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginRight: 2,
+                  flexShrink: 0,
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px 6px",
+                  borderRadius: 10,
+                  transition: "all 0.18s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(168,85,247,0.12)";
+                  const span = e.currentTarget.querySelector("span");
+                  if (span)
+                    (span as HTMLElement).style.textShadow =
+                      "0 0 18px rgba(168,85,247,0.7)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
+                  const span = e.currentTarget.querySelector("span");
+                  if (span) (span as HTMLElement).style.textShadow = "none";
+                }}
+              >
+                <img
+                  src={SKETCHORA_LOGO}
+                  alt="Sketchora"
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: "50%",
+                    objectFit: "cover",
+                  }}
+                />
+                <span
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 15,
+                    letterSpacing: "-0.02em",
+                    background:
+                      "linear-gradient(135deg,#c4b5fd 0%,#6ee7b7 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    backgroundClip: "text",
+                    transition: "text-shadow 0.18s",
+                  }}
+                >
+                  Sketchora
+                </span>
+              </button>
+            </>
+          )}
+
+          {/* Sketchora logo + name (standalone, no home) */}
+          {!onGoHome && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginRight: 2,
+                flexShrink: 0,
+              }}
+            >
+              <img
+                src={SKETCHORA_LOGO}
+                alt="Sketchora"
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: "50%",
+                  objectFit: "cover",
+                }}
+              />
+              <span
+                style={{
+                  fontWeight: 800,
+                  fontSize: 15,
+                  letterSpacing: "-0.02em",
+                  background: "linear-gradient(135deg,#c4b5fd 0%,#6ee7b7 100%)",
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  backgroundClip: "text",
+                }}
+              >
+                Sketchora
+              </span>
+            </div>
+          )}
+
           {/* Menu button */}
           <div ref={menuRef} style={{ position: "relative" }}>
             <button
@@ -452,10 +751,16 @@ export default function TopNavBar({
             <motion.button
               type="button"
               onClick={onRedo}
+              disabled={!canRedo}
               whileTap={{ scale: 0.92 }}
               data-ocid="topnav.redo.button"
               title="Redo (Ctrl+Y)"
-              style={{ ...btnBase, width: 30, height: 30, opacity: 0.5 }}
+              style={{
+                ...btnBase,
+                width: 30,
+                height: 30,
+                opacity: canRedo ? 1 : 0.3,
+              }}
               className="hover:bg-white/8 hover:text-white"
             >
               <Redo2 size={14} />
@@ -677,7 +982,7 @@ export default function TopNavBar({
             }}
           />
 
-          {/* Theme toggle */}
+          {/* Theme toggle — 3-way: dark / light / purple */}
           <div
             style={{
               display: "flex",
@@ -736,7 +1041,48 @@ export default function TopNavBar({
             >
               <Moon size={14} />
             </button>
+            <button
+              type="button"
+              onClick={() => onColorThemeChange("purple")}
+              data-ocid="topnav.theme_purple.toggle"
+              title="Purple mode"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                border: "none",
+                cursor: "pointer",
+                background:
+                  colorTheme === "purple"
+                    ? "rgba(168,85,247,0.2)"
+                    : "transparent",
+                color: colorTheme === "purple" ? "#a855f7" : "#6b6b70",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.25s ease",
+              }}
+            >
+              <Sparkles size={14} />
+            </button>
           </div>
+
+          {/* Canvas Settings button */}
+          <button
+            type="button"
+            onClick={onCanvasSettingsOpen ?? (() => {})}
+            data-ocid="topnav.canvas_settings.button"
+            title="Canvas Settings"
+            style={{
+              ...btnBase,
+              width: 30,
+              height: 30,
+              color: "oklch(0.6 0.005 240)",
+            }}
+            className="hover:bg-white/8 hover:text-white"
+          >
+            <Settings size={14} />
+          </button>
 
           <div
             style={{
@@ -746,48 +1092,251 @@ export default function TopNavBar({
             }}
           />
 
-          {/* Profile avatar */}
+          {/* Profile avatar - one-time PFP */}
           <div style={{ position: "relative" }}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleProfileUpload}
-              data-ocid="topnav.profile.upload_button"
-              style={{ display: "none" }}
-            />
+            {!pfpLocked && (
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleProfileUpload}
+                data-ocid="topnav.profile.upload_button"
+                style={{ display: "none" }}
+              />
+            )}
             <div
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => !pfpLocked && fileInputRef.current?.click()}
               onKeyDown={() => {}}
-              title="Upload profile picture"
+              title={
+                pfpLocked
+                  ? "Profile picture can only be set once"
+                  : "Upload profile picture"
+              }
               style={{
                 width: 28,
                 height: 28,
                 borderRadius: "50%",
-                background: profileImage
-                  ? "transparent"
-                  : "oklch(0.65 0.18 160)",
-                border: "2px solid rgba(255,255,255,0.1)",
-                cursor: "pointer",
-                overflow: "hidden",
+                background:
+                  pfpDataUrl || profileImage
+                    ? "transparent"
+                    : "linear-gradient(135deg,#7c3aed,#10b981)",
+                border: pfpLocked
+                  ? "2px solid rgba(124,58,237,0.5)"
+                  : "2px solid rgba(255,255,255,0.1)",
+                cursor: pfpLocked ? "default" : "pointer",
+                overflow: "visible",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 fontSize: 10,
                 fontWeight: 700,
                 color: "#fff",
+                position: "relative",
+                flexShrink: 0,
               }}
             >
-              {profileImage ? (
-                <img
-                  src={profileImage}
-                  alt="Profile"
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              ) : (
-                "You"
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  overflow: "hidden",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {pfpDataUrl || profileImage ? (
+                  <img
+                    src={pfpDataUrl || profileImage || ""}
+                    alt="Profile"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 10 }}>You</span>
+                )}
+              </div>
+              {pfpLocked && (
+                <span
+                  data-ocid="topnav.profile.locked_state"
+                  style={{
+                    position: "absolute",
+                    bottom: -3,
+                    right: -3,
+                    fontSize: 10,
+                    lineHeight: 1,
+                    background: "#1a0f2e",
+                    borderRadius: "50%",
+                    width: 14,
+                    height: 14,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  🔒
+                </span>
               )}
             </div>
+            {/* PFP error message */}
+            {pfpError && (
+              <div
+                data-ocid="topnav.profile.error_state"
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  right: 0,
+                  background: "#1a0f2e",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  borderRadius: 8,
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  color: "#f87171",
+                  whiteSpace: "nowrap",
+                  zIndex: 300,
+                  boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                }}
+              >
+                {pfpError}
+                <button
+                  type="button"
+                  onClick={() => setPfpError(null)}
+                  style={{
+                    marginLeft: 6,
+                    background: "none",
+                    border: "none",
+                    color: "#f87171",
+                    cursor: "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {/* PFP confirmation dialog */}
+            {showPfpConfirm && (
+              <div
+                data-ocid="topnav.profile.dialog"
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 9999,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "rgba(0,0,0,0.6)",
+                  backdropFilter: "blur(6px)",
+                  animation: "pfp-fade-in 0.2s ease",
+                }}
+                onClick={() => {
+                  setShowPfpConfirm(false);
+                  setPendingPfpFile(null);
+                }}
+                onKeyDown={(e) =>
+                  e.key === "Escape" && setShowPfpConfirm(false)
+                }
+                role="presentation"
+              >
+                <div
+                  style={{
+                    background: "linear-gradient(135deg,#1a0f2e,#120e1e)",
+                    border: "1px solid rgba(124,58,237,0.4)",
+                    borderRadius: 16,
+                    padding: "28px 32px",
+                    maxWidth: 360,
+                    width: "90%",
+                    boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
+                    animation:
+                      "pfp-slide-up 0.25s cubic-bezier(0.34,1.56,0.64,1)",
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      fontSize: 28,
+                      textAlign: "center",
+                      marginBottom: 12,
+                    }}
+                  >
+                    📸
+                  </div>
+                  <h3
+                    style={{
+                      color: "#f0eaff",
+                      fontWeight: 700,
+                      fontSize: 16,
+                      textAlign: "center",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Set Profile Picture
+                  </h3>
+                  <p
+                    style={{
+                      color: "rgba(240,234,255,0.55)",
+                      fontSize: 13,
+                      textAlign: "center",
+                      marginBottom: 24,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    Are you sure?{" "}
+                    <strong style={{ color: "#c4b5fd" }}>
+                      You can&apos;t change this later.
+                    </strong>
+                  </p>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      data-ocid="topnav.profile.dialog.cancel_button"
+                      onClick={() => {
+                        setShowPfpConfirm(false);
+                        setPendingPfpFile(null);
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: "10px",
+                        borderRadius: 999,
+                        border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.06)",
+                        color: "rgba(255,255,255,0.75)",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      data-ocid="topnav.profile.dialog.confirm_button"
+                      onClick={confirmPfpUpload}
+                      style={{
+                        flex: 1,
+                        padding: "10px",
+                        borderRadius: 999,
+                        border: "none",
+                        background: "linear-gradient(135deg,#7c3aed,#10b981)",
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontSize: 13,
+                        fontWeight: 700,
+                        transition: "all 0.15s",
+                        boxShadow: "0 2px 12px rgba(124,58,237,0.4)",
+                      }}
+                    >
+                      Yes, Set It!
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div
@@ -797,6 +1346,30 @@ export default function TopNavBar({
               background: "oklch(0.25 0.005 240)",
             }}
           />
+
+          <motion.button
+            type="button"
+            onClick={() => setShowOpenProjectModal(true)}
+            whileTap={{ scale: 0.95 }}
+            data-ocid="topnav.open_project.button"
+            title="Open Project"
+            style={{
+              ...btnBase,
+              padding: "0 10px",
+              height: 30,
+              gap: 5,
+              fontSize: 12,
+              fontWeight: 600,
+              color: isLight ? "#555577" : "oklch(0.75 0.005 240)",
+              border: isLight
+                ? "1px solid #cdd0d8"
+                : "1px solid oklch(0.25 0.005 240)",
+            }}
+            className="hover:bg-white/8 hover:text-white"
+          >
+            <FolderOpen size={13} />
+            Open Project
+          </motion.button>
 
           <motion.button
             type="button"
@@ -844,6 +1417,83 @@ export default function TopNavBar({
           </motion.button>
         </div>
       </header>
+
+      {/* Open Project Modal */}
+      {showOpenProjectModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+          onClick={() => setShowOpenProjectModal(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setShowOpenProjectModal(false);
+          }}
+        >
+          <motion.div
+            initial={{ scale: 0.85, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: isLight ? "#fff" : "#1a1a2e",
+              border: `1px solid ${navBorder}`,
+              borderRadius: 16,
+              padding: "32px 40px",
+              textAlign: "center",
+              minWidth: 280,
+              boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+            }}
+            data-ocid="topnav.open_project.modal"
+          >
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🚧</div>
+            <h3
+              style={{
+                color: navText,
+                fontSize: 18,
+                fontWeight: 700,
+                marginBottom: 8,
+                margin: "0 0 8px",
+              }}
+            >
+              Coming Soon
+            </h3>
+            <p
+              style={{
+                color: isLight ? "#555577" : "oklch(0.55 0.005 240)",
+                fontSize: 14,
+                margin: "0 0 24px",
+              }}
+            >
+              Open Project will be available in a future update.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowOpenProjectModal(false)}
+              data-ocid="topnav.open_project.close_button"
+              style={{
+                marginTop: 4,
+                padding: "8px 24px",
+                borderRadius: 999,
+                background: accentBg,
+                color: accentColor,
+                border: `1px solid ${accentBorder}`,
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: 13,
+                fontFamily: "inherit",
+              }}
+            >
+              Got it
+            </button>
+          </motion.div>
+        </div>
+      )}
 
       {/* Coming Soon Modal */}
       {showComingSoon && (

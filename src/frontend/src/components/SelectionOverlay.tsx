@@ -1,4 +1,4 @@
-import { Clipboard, Copy, MoveIcon, Scissors, Trash2, X } from "lucide-react";
+import { Clipboard, Copy, RotateCw, Scissors, Trash2, X } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DrawingCanvasHandle } from "./DrawingCanvas";
@@ -1269,6 +1269,21 @@ export default function SelectionOverlay({
               }}
             />
             <ToolbarButton
+              icon={<RotateCw size={13} />}
+              label="Transform (resize/rotate/move)"
+              ocid="selection.transform.button"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Transform is always active when selection is shown — just show a visual hint
+                setSelState("selected");
+              }}
+              active={
+                stateRef.current === "selected" ||
+                stateRef.current === "resizing" ||
+                stateRef.current === "rotating"
+              }
+            />
+            <ToolbarButton
               icon={<Trash2 size={13} />}
               label="Delete"
               ocid="selection.delete_button"
@@ -1320,6 +1335,7 @@ interface ToolbarButtonProps {
   ocid: string;
   onClick: (e: React.MouseEvent) => void;
   danger?: boolean;
+  active?: boolean;
 }
 
 function ToolbarButton({
@@ -1328,6 +1344,7 @@ function ToolbarButton({
   ocid,
   onClick,
   danger,
+  active,
 }: ToolbarButtonProps) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -1339,18 +1356,24 @@ function ToolbarButton({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        background: hovered
-          ? danger
-            ? "rgba(220,50,50,0.3)"
-            : "rgba(255,255,255,0.12)"
-          : danger
-            ? "rgba(220,50,50,0.12)"
-            : "transparent",
-        border: `1px solid ${hovered ? (danger ? "rgba(220,50,50,0.5)" : "rgba(255,255,255,0.2)") : "transparent"}`,
-        borderRadius: 6,
-        padding: "4px 7px",
+        background: active
+          ? "rgba(0,140,255,0.2)"
+          : hovered
+            ? danger
+              ? "rgba(220,50,50,0.3)"
+              : "rgba(255,255,255,0.12)"
+            : danger
+              ? "rgba(220,50,50,0.12)"
+              : "transparent",
+        border: `1px solid ${active ? "rgba(0,140,255,0.5)" : hovered ? (danger ? "rgba(220,50,50,0.5)" : "rgba(255,255,255,0.2)") : "transparent"}`,
+        borderRadius: 999,
+        padding: "4px 9px",
         cursor: "pointer",
-        color: danger ? "rgba(255,100,100,0.9)" : "rgba(220,220,240,0.9)",
+        color: active
+          ? "rgba(80,180,255,0.95)"
+          : danger
+            ? "rgba(255,100,100,0.9)"
+            : "rgba(220,220,240,0.9)",
         display: "flex",
         alignItems: "center",
         gap: 4,
@@ -1358,10 +1381,11 @@ function ToolbarButton({
         fontWeight: 500,
         transition: "all 0.12s ease",
         whiteSpace: "nowrap",
+        transform: hovered ? "scale(1.05)" : "scale(1)",
       }}
     >
       {icon}
-      <span>{label.split(" (")[0]}</span>
+      <span>{label.split(" (")[0].split(" (")[0]}</span>
     </button>
   );
 }

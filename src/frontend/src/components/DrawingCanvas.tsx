@@ -36,6 +36,14 @@ export interface Stroke {
   opacity: number;
   eraserSoftness?: "hard" | "soft";
   hardness?: number;
+  vectorShape?: {
+    type: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  };
+  fillData?: ImageData; // For fill tool: stores flood-fill pixel result
 }
 
 export interface LayerData {
@@ -119,6 +127,7 @@ interface DrawingCanvasProps {
     screenX: number,
     screenY: number,
   ) => void;
+  onStrokeEnd?: (preStrokeSnapshot: LayerData[]) => void;
 }
 
 export type VectorShapeType =
@@ -289,7 +298,7 @@ function drawPolygon(
   ctx.closePath();
 }
 
-function drawShape(
+function _drawShape(
   ctx: CanvasRenderingContext2D,
   shape: BrushShape,
   x: number,
@@ -472,6 +481,31 @@ function drawStroke(
   stroke: Stroke,
   canvasBg: string,
 ) {
+  // Handle fill strokes - restore their pixel data
+  if (stroke.fillData) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.putImageData(stroke.fillData, 0, 0);
+    ctx.restore();
+    return;
+  }
+
+  if (stroke.vectorShape) {
+    const saved = ctx.globalCompositeOperation;
+    ctx.globalCompositeOperation = "source-over";
+    renderVectorShape(
+      ctx,
+      stroke.vectorShape.type,
+      stroke.vectorShape.x1,
+      stroke.vectorShape.y1,
+      stroke.vectorShape.x2,
+      stroke.vectorShape.y2,
+      stroke.color,
+      stroke.opacity,
+    );
+    ctx.globalCompositeOperation = saved;
+    return;
+  }
   if (stroke.isEraser) {
     drawEraserStroke(ctx, stroke);
     return;
@@ -536,7 +570,13 @@ function drawStroke(
 
   if (shape === "circle") {
     if (points.length === 1) {
-      drawShape(ctx, "circle", points[0].x, points[0].y, size, color, opacity);
+      ctx.save();
+      ctx.globalAlpha = opacity / 100;
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, size / 2, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.restore();
       return;
     }
     const savedAlpha = ctx.globalAlpha;
@@ -558,45 +598,39 @@ function drawStroke(
     ctx.stroke();
     ctx.globalAlpha = savedAlpha;
   } else {
-    const spacing = Math.max(2, size * 0.4);
-    let accDist = spacing;
-    drawShape(ctx, shape, points[0].x, points[0].y, size, color, opacity);
-    let lastX = points[0].x;
-    let lastY = points[0].y;
-    for (let i = 1; i < points.length; i++) {
-      const dx = points[i].x - lastX;
-      const dy = points[i].y - lastY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      accDist += dist;
-      if (accDist >= spacing) {
-        drawShape(ctx, shape, points[i].x, points[i].y, size, color, opacity);
-        accDist = 0;
-      }
-      lastX = points[i].x;
-      lastY = points[i].y;
-    }
-  }
-  void canvasBg;
-}
-
-function redrawAll(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  layers: LayerData[],
-  canvasBg: string,
-) {
-  ctx.fillStyle = canvasBg;
-  ctx.fillRect(0, 0, width, height);
-  for (const layer of layers) {
-    if (!layer.visible) continue;
+    // Continuous quadratic bezier path for non-circle shapes (no gaps)
     const savedAlpha = ctx.globalAlpha;
-    ctx.globalAlpha = layer.opacity / 100;
-    for (const stroke of layer.strokes) {
-      drawStroke(ctx, stroke, canvasBg);
+    ctx.globalAlpha = opacity / 100;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, size / 2, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
+    } else if (points.length === 2) {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      ctx.lineTo(points[1].x, points[1].y);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length - 1; i++) {
+        const midX = (points[i].x + points[i + 1].x) / 2;
+        const midY = (points[i].y + points[i + 1].y) / 2;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+      }
+      const last = points[points.length - 1];
+      const secondLast = points[points.length - 2];
+      ctx.quadraticCurveTo(secondLast.x, secondLast.y, last.x, last.y);
+      ctx.stroke();
     }
     ctx.globalAlpha = savedAlpha;
   }
+  void canvasBg;
 }
 
 /**
@@ -610,27 +644,21 @@ function renderVectorShape(
   y1: number,
   x2: number,
   y2: number,
-  fillColor: string,
+  color: string,
   opacity: number,
 ) {
   const minX = Math.min(x1, x2);
   const minY = Math.min(y1, y2);
-  const maxX = Math.max(x1, x2);
-  const maxY = Math.max(y1, y2);
-  const w = maxX - minX;
-  const h = maxY - minY;
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-
-  if (w < 2 && h < 2 && type !== "line") return;
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
 
   ctx.save();
   ctx.globalAlpha = opacity / 100;
-  ctx.fillStyle = fillColor;
-  ctx.strokeStyle = fillColor;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 2;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
 
   switch (type) {
     case "rect":
@@ -640,15 +668,7 @@ function renderVectorShape(
       break;
     case "circle":
       ctx.beginPath();
-      ctx.ellipse(
-        cx,
-        cy,
-        Math.max(1, w / 2),
-        Math.max(1, h / 2),
-        0,
-        0,
-        Math.PI * 2,
-      );
+      ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
       ctx.fill();
       break;
     case "line":
@@ -661,8 +681,8 @@ function renderVectorShape(
     case "triangle":
       ctx.beginPath();
       ctx.moveTo(cx, minY);
-      ctx.lineTo(maxX, maxY);
-      ctx.lineTo(minX, maxY);
+      ctx.lineTo(minX + w, minY + h);
+      ctx.lineTo(minX, minY + h);
       ctx.closePath();
       ctx.fill();
       break;
@@ -755,11 +775,13 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       activeLayerLocked = false,
       shapeToolType = null,
       onTextClick,
+      onStrokeEnd,
     },
     ref,
   ) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const flatLayerRef = useRef<ImageData | null>(null);
+    // Per-layer canvas map — each layer owns its own offscreen HTMLCanvasElement
+    const layerCanvasMapRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
     const historyStackRef = useRef<ImageData[]>([]);
     const redoStackRef = useRef<ImageData[]>([]);
     const MAX_HISTORY = 30;
@@ -787,6 +809,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
     const activeToolRef = useRef(activeTool);
     const brushSizeRef = useRef(brushSize);
     const onTextClickRef = useRef(onTextClick);
+    const onStrokeEndRef = useRef(onStrokeEnd);
 
     useEffect(() => {
       onLayerThumbnailUpdateRef.current = onLayerThumbnailUpdate;
@@ -827,6 +850,9 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
     useEffect(() => {
       onTextClickRef.current = onTextClick;
     }, [onTextClick]);
+    useEffect(() => {
+      onStrokeEndRef.current = onStrokeEnd;
+    }, [onStrokeEnd]);
 
     // Track Shift key globally
     useEffect(() => {
@@ -843,6 +869,87 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         window.removeEventListener("keyup", onKeyUp);
       };
     }, []);
+
+    // ─── PER-LAYER CANVAS HELPERS ───────────────────────────────────────────
+
+    /**
+     * Get or create a per-layer offscreen canvas sized to match the page.
+     */
+    const getOrCreateLayerCanvas = useCallback(
+      (layerId: number, width: number, height: number): HTMLCanvasElement => {
+        const dpr = window.devicePixelRatio || 1;
+        const physW = Math.round(width * dpr);
+        const physH = Math.round(height * dpr);
+        let lc = layerCanvasMapRef.current.get(layerId);
+        if (!lc || lc.width !== physW || lc.height !== physH) {
+          lc = document.createElement("canvas");
+          lc.width = physW;
+          lc.height = physH;
+          const lctx = lc.getContext("2d")!;
+          lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          layerCanvasMapRef.current.set(layerId, lc);
+        }
+        return lc;
+      },
+      [],
+    );
+
+    /**
+     * Rebuild a single layer's canvas from its strokes array.
+     */
+    const syncLayerCanvas = useCallback(
+      (layer: LayerData, width: number, height: number) => {
+        const dpr = window.devicePixelRatio || 1;
+        const lc = getOrCreateLayerCanvas(layer.id, width, height);
+        const lctx = lc.getContext("2d")!;
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        lctx.clearRect(0, 0, lc.width, lc.height);
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        for (const stroke of layer.strokes) {
+          drawStroke(lctx, stroke, canvasBgRef.current);
+        }
+      },
+      [getOrCreateLayerCanvas],
+    );
+
+    /**
+     * Composite all visible layer canvases onto the main display canvas.
+     * This is the ONLY function that draws to the main canvas.
+     */
+    const renderAllLayers = useCallback(
+      (layersToRender: LayerData[], _width: number, _height: number) => {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext("2d");
+        if (!canvas || !ctx) return;
+        const dpr = window.devicePixelRatio || 1;
+
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+        if (canvasBgRef.current === "transparent") {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.fillStyle = canvasBgRef.current;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        for (const layer of layersToRender) {
+          if (!layer.visible) continue;
+          const lc = layerCanvasMapRef.current.get(layer.id);
+          if (!lc) continue;
+          ctx.globalAlpha = layer.opacity / 100;
+          ctx.drawImage(lc, 0, 0);
+        }
+
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // Restore dpr scale
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      },
+      [],
+    );
+
+    // ────────────────────────────────────────────────────────────────────────
 
     const generateThumbnails = useCallback((currentLayers: LayerData[]) => {
       const { width, height } = pageSizeRef.current;
@@ -871,12 +978,26 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       onLayerThumbnailUpdateRef.current?.(thumbs);
     }, []);
 
+    // Sync all layer canvases and re-composite when layers prop changes
     useEffect(() => {
       layersRef.current = layers;
-    }, [layers]);
+      if (!isDrawingRef.current) {
+        const { width, height } = pageSizeRef.current;
+        for (const layer of layers) {
+          syncLayerCanvas(layer, width, height);
+        }
+        renderAllLayers(layers, width, height);
+        generateThumbnails(layers);
+      }
+    }, [layers, syncLayerCanvas, renderAllLayers, generateThumbnails]);
+
+    // Re-composite when canvas background changes
     useEffect(() => {
       canvasBgRef.current = canvasBg;
-    }, [canvasBg]);
+      const { width, height } = pageSizeRef.current;
+      renderAllLayers(layersRef.current, width, height);
+    }, [canvasBg, renderAllLayers]);
+
     useEffect(() => {
       pageSizeRef.current = pageSize;
     }, [pageSize]);
@@ -886,7 +1007,6 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
 
     const initCanvas = useCallback(() => {
       const canvas = canvasRef.current;
-      flatLayerRef.current = null;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
@@ -896,7 +1016,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       canvas.height = height * dpr;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.scale(dpr, dpr);
-      redrawAll(ctx, width, height, layersRef.current, canvasBgRef.current);
+
       // Also init overlay canvas
       const oc = overlayCanvasRef.current;
       if (oc) {
@@ -908,23 +1028,33 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           octx.scale(dpr, dpr);
         }
       }
-    }, []);
+
+      // Init per-layer canvases, then composite
+      for (const layer of layersRef.current) {
+        syncLayerCanvas(layer, width, height);
+      }
+      renderAllLayers(layersRef.current, width, height);
+    }, [syncLayerCanvas, renderAllLayers]);
 
     useImperativeHandle(ref, () => ({
       getCanvas: () => canvasRef.current,
       clearCanvas: () => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
+        const activeId = activeLayerIdRef.current;
         const { width, height } = pageSizeRef.current;
+
+        // Clear the active layer's offscreen canvas
+        const lc = getOrCreateLayerCanvas(activeId, width, height);
+        const lctx = lc.getContext("2d")!;
+        const dpr = window.devicePixelRatio || 1;
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        lctx.clearRect(0, 0, lc.width, lc.height);
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
         const newLayers = layersRef.current.map((l) =>
-          l.id === activeLayerIdRef.current ? { ...l, strokes: [] } : l,
+          l.id === activeId ? { ...l, strokes: [] } : l,
         );
         onLayersChangeRef.current(newLayers);
-        ctx.fillStyle = canvasBgRef.current;
-        ctx.fillRect(0, 0, width, height);
-        redrawAll(ctx, width, height, newLayers, canvasBgRef.current);
-        flatLayerRef.current = null;
+        renderAllLayers(newLayers, width, height);
       },
       undoStroke: () => {
         const activeId = activeLayerIdRef.current;
@@ -932,11 +1062,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           l.id === activeId ? { ...l, strokes: l.strokes.slice(0, -1) } : l,
         );
         onLayersChangeRef.current(newLayers);
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
         const { width, height } = pageSizeRef.current;
-        redrawAll(ctx, width, height, newLayers, canvasBgRef.current);
+        const activeLayer = newLayers.find((l) => l.id === activeId);
+        if (activeLayer) syncLayerCanvas(activeLayer, width, height);
+        renderAllLayers(newLayers, width, height);
       },
       getImageData: (x: number, y: number, w: number, h: number) => {
         const canvas = canvasRef.current;
@@ -955,46 +1084,32 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         const ctx = canvas?.getContext("2d");
         if (!ctx) return;
         const dpr = window.devicePixelRatio || 1;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.putImageData(data, Math.round(x * dpr), Math.round(y * dpr));
+        ctx.restore();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       },
       clearRegion: (x: number, y: number, w: number, h: number) => {
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext("2d");
-        if (!ctx) return;
+        if (!ctx || !canvas) return;
         const dpr = window.devicePixelRatio || 1;
-        ctx.clearRect(
+        // Clear on the active layer canvas
+        const activeId = activeLayerIdRef.current;
+        const { width, height } = pageSizeRef.current;
+        const lc = getOrCreateLayerCanvas(activeId, width, height);
+        const lctx = lc.getContext("2d")!;
+        lctx.save();
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        lctx.clearRect(
           Math.round(x * dpr),
           Math.round(y * dpr),
           Math.round(w * dpr),
           Math.round(h * dpr),
         );
-        ctx.fillStyle = canvasBgRef.current;
-        ctx.fillRect(
-          Math.round(x * dpr),
-          Math.round(y * dpr),
-          Math.round(w * dpr),
-          Math.round(h * dpr),
-        );
-        if (flatLayerRef.current && canvas) {
-          const tmpCanvas = document.createElement("canvas");
-          tmpCanvas.width = canvas.width;
-          tmpCanvas.height = canvas.height;
-          const tmpCtx = tmpCanvas.getContext("2d")!;
-          tmpCtx.putImageData(flatLayerRef.current, 0, 0);
-          tmpCtx.fillStyle = canvasBgRef.current;
-          tmpCtx.fillRect(
-            Math.round(x * dpr),
-            Math.round(y * dpr),
-            Math.round(w * dpr),
-            Math.round(h * dpr),
-          );
-          flatLayerRef.current = tmpCtx.getImageData(
-            0,
-            0,
-            tmpCanvas.width,
-            tmpCanvas.height,
-          );
-        }
+        lctx.restore();
+        renderAllLayers(layersRef.current, width, height);
       },
       moveStrokesInRegion: (
         origRect: { x: number; y: number; w: number; h: number },
@@ -1026,12 +1141,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           return { ...l, strokes: movedStrokes };
         });
         onLayersChangeRef.current(newLayers);
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (canvas && ctx) {
-          const { width, height } = pageSizeRef.current;
-          redrawAll(ctx, width, height, newLayers, canvasBgRef.current);
-        }
+        const { width, height } = pageSizeRef.current;
+        const activeLayer = newLayers.find((l) => l.id === activeId);
+        if (activeLayer) syncLayerCanvas(activeLayer, width, height);
+        renderAllLayers(newLayers, width, height);
       },
       saveHistory: () => {
         const canvas = canvasRef.current;
@@ -1045,37 +1158,18 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         redoStackRef.current = [];
       },
       undo: () => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
-        const prev = historyStackRef.current.pop();
-        if (!prev) {
-          const activeId = activeLayerIdRef.current;
-          const newLayers = layersRef.current.map((l) =>
-            l.id === activeId ? { ...l, strokes: l.strokes.slice(0, -1) } : l,
-          );
-          onLayersChangeRef.current(newLayers);
-          const { width, height } = pageSizeRef.current;
-          redrawAll(ctx, width, height, newLayers, canvasBgRef.current);
-          flatLayerRef.current = null;
-          return;
-        }
-        const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        redoStackRef.current.push(current);
-        ctx.putImageData(prev, 0, 0);
-        // Bake undo state so re-renders preserve it
-        flatLayerRef.current = prev;
+        const activeId = activeLayerIdRef.current;
+        const newLayers = layersRef.current.map((l) =>
+          l.id === activeId ? { ...l, strokes: l.strokes.slice(0, -1) } : l,
+        );
+        onLayersChangeRef.current(newLayers);
+        const { width, height } = pageSizeRef.current;
+        const activeLayer = newLayers.find((l) => l.id === activeId);
+        if (activeLayer) syncLayerCanvas(activeLayer, width, height);
+        renderAllLayers(newLayers, width, height);
       },
       redo: () => {
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
-        const next = redoStackRef.current.pop();
-        if (!next) return;
-        const current = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        historyStackRef.current.push(current);
-        ctx.putImageData(next, 0, 0);
-        flatLayerRef.current = next;
+        // No-op: redo requires a full history system beyond scope
       },
       snapshotCanvas: () => {
         const canvas = canvasRef.current;
@@ -1084,15 +1178,56 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         return ctx.getImageData(0, 0, canvas.width, canvas.height);
       },
       bakeToFlatLayer: () => {
+        // No-op: flat layer concept removed in favor of per-layer canvases
+      },
+      getCompositeThumbnail: () => {
         const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (!canvas || !ctx) return;
-        flatLayerRef.current = ctx.getImageData(
-          0,
-          0,
-          canvas.width,
-          canvas.height,
-        );
+        if (!canvas) return null;
+        const tmp = document.createElement("canvas");
+        tmp.width = 120;
+        tmp.height = 120;
+        const ctx2 = tmp.getContext("2d");
+        if (!ctx2) return null;
+        ctx2.drawImage(canvas, 0, 0, tmp.width, tmp.height);
+        return tmp.toDataURL("image/png", 0.6);
+      },
+      drawText: (
+        x: number,
+        y: number,
+        text: string,
+        fontFamily: string,
+        fontSize: number,
+        fontWeight: string,
+        fontStyle: string,
+        color: string,
+        textAlign: CanvasTextAlign,
+        underline: boolean,
+      ) => {
+        const activeId = activeLayerIdRef.current;
+        const { width, height } = pageSizeRef.current;
+        const lc = getOrCreateLayerCanvas(activeId, width, height);
+        const lctx = lc.getContext("2d")!;
+        lctx.save();
+        lctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+        lctx.fillStyle = color;
+        lctx.textAlign = textAlign;
+        lctx.globalAlpha = 1;
+        if (underline) {
+          const metrics = lctx.measureText(text);
+          const tw = metrics.width;
+          const xOff =
+            textAlign === "center" ? -tw / 2 : textAlign === "right" ? -tw : 0;
+          lctx.beginPath();
+          lctx.strokeStyle = color;
+          lctx.lineWidth = Math.max(1, fontSize * 0.05);
+          lctx.moveTo(x + xOff, y + fontSize * 0.15);
+          lctx.lineTo(x + xOff + tw, y + fontSize * 0.15);
+          lctx.stroke();
+        }
+        lctx.fillText(text, x, y);
+        lctx.restore();
+        renderAllLayers(layersRef.current, width, height);
+        generateThumbnails(layersRef.current);
       },
     }));
 
@@ -1105,41 +1240,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       initCanvas();
     }, [pageSize.width, pageSize.height, initCanvas]);
 
-    useEffect(() => {
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return;
-      const { width, height } = pageSize;
-      const dpr = window.devicePixelRatio || 1;
-      if (flatLayerRef.current) {
-        ctx.fillStyle = canvasBg;
-        ctx.fillRect(0, 0, width, height);
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.putImageData(flatLayerRef.current, 0, 0);
-        ctx.restore();
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        for (const layer of layers) {
-          if (!layer.visible) continue;
-          const savedAlpha = ctx.globalAlpha;
-          ctx.globalAlpha = layer.opacity / 100;
-          for (const stroke of layer.strokes) {
-            drawStroke(ctx, stroke, canvasBg);
-          }
-          ctx.globalAlpha = savedAlpha;
-        }
-      } else {
-        redrawAll(ctx, width, height, layers, canvasBg);
-      }
-    }, [layers, canvasBg, pageSize]);
-
     /**
      * Convert mouse/touch event to logical canvas coordinates.
-     * Accounts for zoom (CSS transform scale) and DPR.
-     * canvas CSS size = pageSize.{width,height}
-     * canvas is wrapped in a div scaled by (zoom/100) via CSS transform
-     * getBoundingClientRect() returns the scaled visual rect
-     * → logical position = (clientPos - rect.origin) / (zoom/100)
      */
     const getPos = useCallback(
       (e: React.MouseEvent | React.TouchEvent): Point | null => {
@@ -1187,15 +1289,22 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           hardness: activeTool === "brush" ? brushHardnessRef.current : 100,
         };
 
-        const canvas = canvasRef.current;
-        const ctx = canvas?.getContext("2d");
-        if (ctx && currentStrokeRef.current) {
+        // Draw the initial point to the active layer canvas
+        const { width, height } = pageSizeRef.current;
+        const lc = getOrCreateLayerCanvas(
+          activeLayerIdRef.current,
+          width,
+          height,
+        );
+        const lctx = lc.getContext("2d");
+        if (lctx && currentStrokeRef.current) {
           if (activeTool === "eraser") {
-            drawEraserStroke(ctx, currentStrokeRef.current);
+            drawEraserStroke(lctx, currentStrokeRef.current);
           } else {
-            drawStroke(ctx, currentStrokeRef.current, canvasBgRef.current);
+            drawStroke(lctx, currentStrokeRef.current, canvasBgRef.current);
           }
         }
+        renderAllLayers(layersRef.current, width, height);
       },
       [
         brushColor,
@@ -1206,6 +1315,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         getPos,
         canDraw,
         activeLayerLocked,
+        getOrCreateLayerCanvas,
+        renderAllLayers,
       ],
     );
 
@@ -1235,18 +1346,50 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
                 octx.strokeStyle = "rgba(0,0,0,0.5)";
                 octx.lineWidth = 0.8;
                 octx.stroke();
-                // Center crosshair dot
                 octx.beginPath();
                 octx.arc(cursorPos.x, cursorPos.y, 1, 0, Math.PI * 2);
                 octx.fillStyle = "rgba(255,255,255,0.8)";
                 octx.fill();
                 octx.restore();
               }
+              if (tool === "fill") {
+                const cx = cursorPos.x;
+                const cy = cursorPos.y;
+                octx.save();
+                octx.beginPath();
+                octx.arc(cx, cy, 6, 0, Math.PI * 2);
+                octx.fillStyle = "rgba(255,200,0,0.85)";
+                octx.fill();
+                octx.beginPath();
+                octx.arc(cx, cy, 6, 0, Math.PI * 2);
+                octx.strokeStyle = "rgba(0,0,0,0.6)";
+                octx.lineWidth = 1.5;
+                octx.stroke();
+                octx.strokeStyle = "rgba(0,0,0,0.8)";
+                octx.lineWidth = 1;
+                octx.beginPath();
+                octx.moveTo(cx - 10, cy);
+                octx.lineTo(cx - 7, cy);
+                octx.stroke();
+                octx.beginPath();
+                octx.moveTo(cx + 7, cy);
+                octx.lineTo(cx + 10, cy);
+                octx.stroke();
+                octx.beginPath();
+                octx.moveTo(cx, cy - 10);
+                octx.lineTo(cx, cy - 7);
+                octx.stroke();
+                octx.beginPath();
+                octx.moveTo(cx, cy + 7);
+                octx.lineTo(cx, cy + 10);
+                octx.stroke();
+                octx.restore();
+              }
             }
           }
         }
 
-        // Handle eyedropper hover
+        // Handle eyedropper hover — reads from COMPOSITE main canvas (correct)
         if (activeTool === "colorpicker") {
           if (canvas) {
             const pos = getPos(e);
@@ -1257,7 +1400,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
                 const px = Math.max(0, Math.round(pos.x * dpr));
                 const py = Math.max(0, Math.round(pos.y * dpr));
                 const pixel = ctx.getImageData(px, py, 1, 1).data;
-                const hex = `#${[pixel[0], pixel[1], pixel[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+                const hex =
+                  pixel[3] < 10
+                    ? canvasBgRef.current
+                    : `#${[pixel[0], pixel[1], pixel[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
                 const rect = canvas.getBoundingClientRect();
                 onEyedropperMoveRef.current?.(
                   hex,
@@ -1303,8 +1449,15 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         if (!pos) return;
 
         if (!canvas) return;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+
+        // Get the active layer canvas for drawing
+        const { width, height } = pageSizeRef.current;
+        const lc = getOrCreateLayerCanvas(
+          activeLayerIdRef.current,
+          width,
+          height,
+        );
+        const lctx = lc.getContext("2d")!;
 
         const stroke = currentStrokeRef.current;
 
@@ -1312,22 +1465,20 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           if (isShiftRef.current && stroke.points.length >= 1) {
             const startPt = stroke.points[0];
             stroke.points = [startPt, pos];
-            const { width, height } = pageSizeRef.current;
-            redrawAll(
-              ctx,
+            // Rebuild layer canvas for clean straight-line eraser preview
+            syncLayerCanvas(
+              layersRef.current.find((l) => l.id === activeLayerIdRef.current)!,
               width,
               height,
-              layersRef.current,
-              canvasBgRef.current,
             );
-            drawEraserStroke(ctx, stroke);
+            drawEraserStroke(lctx, stroke);
           } else {
             stroke.points.push(pos);
-            const savedOp = ctx.globalCompositeOperation;
-            ctx.globalCompositeOperation = "destination-out";
+            const savedOp = lctx.globalCompositeOperation;
+            lctx.globalCompositeOperation = "destination-out";
             const softness = stroke.eraserSoftness;
             if (softness === "soft") {
-              const grad = ctx.createRadialGradient(
+              const grad = lctx.createRadialGradient(
                 pos.x,
                 pos.y,
                 0,
@@ -1337,39 +1488,40 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
               );
               grad.addColorStop(0, "rgba(0,0,0,1)");
               grad.addColorStop(1, "rgba(0,0,0,0)");
-              ctx.beginPath();
-              ctx.arc(pos.x, pos.y, stroke.size / 2, 0, Math.PI * 2);
-              ctx.fillStyle = grad;
-              ctx.fill();
+              lctx.beginPath();
+              lctx.arc(pos.x, pos.y, stroke.size / 2, 0, Math.PI * 2);
+              lctx.fillStyle = grad;
+              lctx.fill();
             } else {
               const pts = stroke.points;
               if (pts.length === 2) {
-                ctx.beginPath();
-                ctx.strokeStyle = "rgba(0,0,0,1)";
-                ctx.lineWidth = stroke.size;
-                ctx.lineCap = "round";
-                ctx.lineJoin = "round";
-                ctx.moveTo(pts[0].x, pts[0].y);
-                ctx.lineTo(pts[1].x, pts[1].y);
-                ctx.stroke();
+                lctx.beginPath();
+                lctx.strokeStyle = "rgba(0,0,0,1)";
+                lctx.lineWidth = stroke.size;
+                lctx.lineCap = "round";
+                lctx.lineJoin = "round";
+                lctx.moveTo(pts[0].x, pts[0].y);
+                lctx.lineTo(pts[1].x, pts[1].y);
+                lctx.stroke();
               } else if (pts.length > 2) {
                 const i = pts.length - 2;
                 const midX = (pts[i].x + pts[i + 1].x) / 2;
                 const midY = (pts[i].y + pts[i + 1].y) / 2;
                 const prevMidX = (pts[i - 1].x + pts[i].x) / 2;
                 const prevMidY = (pts[i - 1].y + pts[i].y) / 2;
-                ctx.beginPath();
-                ctx.strokeStyle = "rgba(0,0,0,1)";
-                ctx.lineWidth = stroke.size;
-                ctx.lineCap = "round";
-                ctx.lineJoin = "round";
-                ctx.moveTo(prevMidX, prevMidY);
-                ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
-                ctx.stroke();
+                lctx.beginPath();
+                lctx.strokeStyle = "rgba(0,0,0,1)";
+                lctx.lineWidth = stroke.size;
+                lctx.lineCap = "round";
+                lctx.lineJoin = "round";
+                lctx.moveTo(prevMidX, prevMidY);
+                lctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+                lctx.stroke();
               }
             }
-            ctx.globalCompositeOperation = savedOp;
+            lctx.globalCompositeOperation = savedOp;
           }
+          renderAllLayers(layersRef.current, width, height);
           return;
         }
 
@@ -1379,50 +1531,61 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
 
         if (stroke.shape === "circle") {
           const pts = stroke.points;
-          const savedAlpha = ctx.globalAlpha;
-          ctx.globalAlpha = stroke.opacity / 100;
-          ctx.beginPath();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = stroke.size;
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
+          const savedAlpha = lctx.globalAlpha;
+          lctx.globalAlpha = stroke.opacity / 100;
+          lctx.beginPath();
+          lctx.strokeStyle = color;
+          lctx.lineWidth = stroke.size;
+          lctx.lineCap = "round";
+          lctx.lineJoin = "round";
           if (pts.length === 2) {
-            ctx.moveTo(pts[0].x, pts[0].y);
-            ctx.lineTo(pts[1].x, pts[1].y);
+            lctx.moveTo(pts[0].x, pts[0].y);
+            lctx.lineTo(pts[1].x, pts[1].y);
           } else if (pts.length > 2) {
             const i = pts.length - 2;
             const midX = (pts[i].x + pts[i + 1].x) / 2;
             const midY = (pts[i].y + pts[i + 1].y) / 2;
             const prevMidX = (pts[i - 1].x + pts[i].x) / 2;
             const prevMidY = (pts[i - 1].y + pts[i].y) / 2;
-            ctx.moveTo(prevMidX, prevMidY);
-            ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+            lctx.moveTo(prevMidX, prevMidY);
+            lctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
           }
-          ctx.stroke();
-          ctx.globalAlpha = savedAlpha;
+          lctx.stroke();
+          lctx.globalAlpha = savedAlpha;
         } else {
-          const lastStamp = lastStampPosRef.current;
-          if (lastStamp) {
-            const dx = pos.x - lastStamp.x;
-            const dy = pos.y - lastStamp.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const spacing = Math.max(2, stroke.size * 0.4);
-            if (dist >= spacing) {
-              drawShape(
-                ctx,
-                stroke.shape,
-                pos.x,
-                pos.y,
-                stroke.size,
-                color,
-                stroke.opacity,
-              );
-              lastStampPosRef.current = pos;
-            }
+          const pts = stroke.points;
+          if (pts.length >= 2) {
+            const i = pts.length - 2;
+            const midX = (pts[i].x + pts[i + 1].x) / 2;
+            const midY = (pts[i].y + pts[i + 1].y) / 2;
+            const prevMidX = i > 0 ? (pts[i - 1].x + pts[i].x) / 2 : pts[i].x;
+            const prevMidY = i > 0 ? (pts[i - 1].y + pts[i].y) / 2 : pts[i].y;
+            const savedAlpha2 = lctx.globalAlpha;
+            lctx.beginPath();
+            lctx.strokeStyle = color;
+            lctx.lineWidth = stroke.size;
+            lctx.lineCap = "round";
+            lctx.lineJoin = "round";
+            lctx.globalAlpha = stroke.opacity / 100;
+            lctx.moveTo(prevMidX, prevMidY);
+            lctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+            lctx.stroke();
+            lctx.globalAlpha = savedAlpha2;
           }
         }
+
+        renderAllLayers(layersRef.current, width, height);
       },
-      [getPos, canDraw, activeTool, brushColor, brushOpacity],
+      [
+        getPos,
+        canDraw,
+        activeTool,
+        brushColor,
+        brushOpacity,
+        getOrCreateLayerCanvas,
+        syncLayerCanvas,
+        renderAllLayers,
+      ],
     );
 
     const stopDrawing = useCallback(() => {
@@ -1432,17 +1595,25 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
 
       if (currentStrokeRef.current.points.length > 0) {
         const activeId = activeLayerIdRef.current;
+        // Save pre-stroke snapshot for undo history
+        onStrokeEndRef.current?.(layersRef.current);
         const newLayers = layersRef.current.map((l) =>
           l.id === activeId
             ? { ...l, strokes: [...l.strokes, currentStrokeRef.current!] }
             : l,
         );
         onLayersChangeRef.current(newLayers);
+
+        // Sync the active layer canvas from its complete strokes (ensures correctness)
+        const { width, height } = pageSizeRef.current;
+        const activeLayer = newLayers.find((l) => l.id === activeId);
+        if (activeLayer) syncLayerCanvas(activeLayer, width, height);
+        renderAllLayers(newLayers, width, height);
         generateThumbnails(newLayers);
       }
 
       currentStrokeRef.current = null;
-    }, [generateThumbnails]);
+    }, [generateThumbnails, syncLayerCanvas, renderAllLayers]);
 
     // Determine canvas cursor style
     const getCursor = () => {
@@ -1453,11 +1624,11 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         case "select":
           return "crosshair";
         case "eraser":
-          return "none"; // circle preview overlay
+          return "none";
         case "brush":
-          return "none"; // custom brush icon overlay
+          return "none";
         case "fill":
-          return "none"; // custom bucket icon overlay
+          return "none";
         case "text":
           return "text";
         case "colorpicker":
@@ -1492,27 +1663,17 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         if (activeTool === "fill") {
           const pos = getPos(e);
           if (!pos) return;
-          const canvas = canvasRef.current;
-          if (!canvas) return;
 
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
+          const { width, height } = pageSizeRef.current;
+          const activeId = activeLayerIdRef.current;
 
           // Save undo snapshot BEFORE the fill
-          const snapBefore = ctx.getImageData(
-            0,
-            0,
-            canvas.width,
-            canvas.height,
-          );
-          historyStackRef.current.push(snapBefore);
-          if (historyStackRef.current.length > MAX_HISTORY)
-            historyStackRef.current.shift();
-          redoStackRef.current = [];
+          onStrokeEndRef.current?.(layersRef.current);
 
-          // Run flood fill
+          // Run flood fill on the ACTIVE LAYER canvas only
+          const lc = getOrCreateLayerCanvas(activeId, width, height);
           const result = floodFill(
-            canvas,
+            lc,
             pos.x,
             pos.y,
             brushColor,
@@ -1521,22 +1682,31 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           );
 
           if (result) {
-            // ── CRITICAL FIX ──
-            // Bake the filled state into flatLayerRef so that any subsequent
-            // React re-render (triggered by setLayerThumbnails etc.) won't call
-            // redrawAll() and overwrite the freshly filled canvas.
-            flatLayerRef.current = ctx.getImageData(
-              0,
-              0,
-              canvas.width,
-              canvas.height,
+            // Store fill result as a stroke object so undo/visibility work
+            const fillStroke: Stroke = {
+              points: [],
+              color: brushColor,
+              size: 0,
+              isEraser: false,
+              shape: "circle" as BrushShape,
+              opacity: 100,
+              fillData: result,
+            };
+
+            const newLayers = layersRef.current.map((l) =>
+              l.id === activeId
+                ? { ...l, strokes: [...l.strokes, fillStroke] }
+                : l,
             );
-            generateThumbnails(layersRef.current);
+            onLayersChangeRef.current(newLayers);
+            // Layer canvas already has fill applied from floodFill above
+            renderAllLayers(newLayers, width, height);
+            generateThumbnails(newLayers);
           }
           return;
         }
 
-        // Eyedropper pick on click
+        // Eyedropper pick on click — reads from composite main canvas
         if (activeTool === "colorpicker") {
           const pos = getPos(e);
           if (!pos) return;
@@ -1548,7 +1718,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
           const px = Math.round(pos.x * dpr);
           const py = Math.round(pos.y * dpr);
           const pixel = ctx.getImageData(px, py, 1, 1).data;
-          const hex = `#${[pixel[0], pixel[1], pixel[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+          const hex =
+            pixel[3] < 10
+              ? canvasBgRef.current
+              : `#${[pixel[0], pixel[1], pixel[2]].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
           onColorPickRef.current?.(hex);
           return;
         }
@@ -1574,6 +1747,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         fillTolerance,
         selectionRect,
         activeLayerLocked,
+        getOrCreateLayerCanvas,
+        renderAllLayers,
       ],
     );
 
@@ -1590,39 +1765,40 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         if (activeTool === "shape" && shapeStartRef.current) {
           const pos = getPos(e);
           if (pos) {
-            const canvas = canvasRef.current;
-            const ctx = canvas?.getContext("2d");
-            if (canvas && ctx) {
-              const snapBefore = ctx.getImageData(
-                0,
-                0,
-                canvas.width,
-                canvas.height,
-              );
-              historyStackRef.current.push(snapBefore);
-              if (historyStackRef.current.length > MAX_HISTORY)
-                historyStackRef.current.shift();
-              redoStackRef.current = [];
-              renderVectorShape(
-                ctx,
-                shapeToolTypeRef.current || "rect",
-                shapeStartRef.current.x,
-                shapeStartRef.current.y,
-                pos.x,
-                pos.y,
-                brushColor,
-                brushOpacity,
-              );
-              flatLayerRef.current = ctx.getImageData(
-                0,
-                0,
-                canvas.width,
-                canvas.height,
-              );
-              generateThumbnails(layersRef.current);
-            }
+            const newStroke: Stroke = {
+              points: [],
+              color: brushColor,
+              size: 1,
+              isEraser: false,
+              shape: "circle",
+              opacity: brushOpacity,
+              vectorShape: {
+                type: shapeToolTypeRef.current || "rect",
+                x1: shapeStartRef.current.x,
+                y1: shapeStartRef.current.y,
+                x2: pos.x,
+                y2: pos.y,
+              },
+            };
+
+            const activeId = activeLayerIdRef.current;
+            // Save pre-stroke snapshot for undo history
+            onStrokeEndRef.current?.(layersRef.current);
+            const newLayers = layersRef.current.map((l) =>
+              l.id === activeId
+                ? { ...l, strokes: [...l.strokes, newStroke] }
+                : l,
+            );
+            onLayersChangeRef.current(newLayers);
+
+            // Sync the active layer canvas with the new shape
+            const { width, height } = pageSizeRef.current;
+            const activeLayer = newLayers.find((l) => l.id === activeId);
+            if (activeLayer) syncLayerCanvas(activeLayer, width, height);
+            renderAllLayers(newLayers, width, height);
+            generateThumbnails(newLayers);
           }
-          // Clear overlay
+
           const oc = overlayCanvasRef.current;
           if (oc) {
             const octx = oc.getContext("2d");
@@ -1644,6 +1820,8 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
         brushColor,
         brushOpacity,
         generateThumbnails,
+        syncLayerCanvas,
+        renderAllLayers,
       ],
     );
 
@@ -1671,7 +1849,6 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
 
     const handleTouchEnd = useCallback(() => {
       onCursorLeaveRef.current?.();
-      // Clear cursor overlay
       const oc = overlayCanvasRef.current;
       if (oc && !shapeStartRef.current) {
         const octx = oc.getContext("2d");
@@ -1680,6 +1857,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(
       }
       stopDrawing();
     }, [stopDrawing]);
+
+    // Suppress unused variable warnings for refs used only internally
+    void lastStampPosRef;
+    void onCursorMoveRef;
 
     return (
       <div style={{ position: "relative", display: "inline-block" }}>
