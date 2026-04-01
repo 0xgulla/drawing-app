@@ -25,8 +25,7 @@ interface UserGuidePageProps {
   onGoHome: () => void;
 }
 
-const LOGO_SRC =
-  "/assets/uploads/chatgpt_image_mar_27_2026_01_48_44_am-019d2c01-0e27-722f-ab9a-506ca29745d4-1.png";
+const LOGO_SRC = "/assets/logo.png";
 
 const sidebarSections = [
   { id: "welcome", label: "Welcome", icon: "👋" },

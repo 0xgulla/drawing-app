@@ -25,8 +25,7 @@ import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import type { UIAccent, UITheme } from "../App";
 
-const SKETCHORA_LOGO =
-  "/assets/uploads/chatgpt_image_mar_27_2026_01_48_44_am-019d2c01-0e27-722f-ab9a-506ca29745d4-1.png";
+const SKETCHORA_LOGO = "/assets/logo.png";
 
 const ZOOM_LEVELS = [10, 25, 50, 75, 100, 125, 150, 200, 300, 500];
 
