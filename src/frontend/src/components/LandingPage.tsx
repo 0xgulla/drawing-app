@@ -362,7 +362,7 @@ export default function LandingPage({
           data-ocid="nav.section"
         >
           <img
-            src="/assets/logo.png"
+            src="/assets/uploads/logo.png"
             alt="Sketchora"
             style={{
               width: 34,
